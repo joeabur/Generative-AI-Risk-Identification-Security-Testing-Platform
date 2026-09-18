@@ -14,6 +14,7 @@ from app.core.discovery.openapi import (
     DiscoveredOperation,
     DiscoveredParameter,
 )
+from app.core.probes.ai.contract import AiProbeTarget, DeclaredTool
 from app.core.probes.credentials import AuthorizationTestPlan, CredentialSet, SyntheticAccount
 from app.core.probes.protocol import ProbeTarget
 from app.core.scope.budgets import BudgetTracker
@@ -22,6 +23,10 @@ from app.core.scope.errors import RoEValidationError
 from app.core.scope.kill_switch import KillSwitch
 from app.core.scope.models import ResolvedAuthorization
 from app.core.scope.resolve import resolve_authorization, resolve_rules_of_engagement
+from app.core.scope.transport import GatedTransport
+from app.core.targets.chat_http import ChatHttpAdapter, ChatHttpConfig
+from app.core.targets.openai_compatible import OpenAiCompatibleAdapter, OpenAiCompatibleConfig
+from app.core.targets.protocol import ConversationalAdapter
 from app.models.surface_endpoint import SurfaceEndpoint
 from app.models.synthetic_account import SyntheticAccount as SyntheticAccountRecord
 from app.models.target import Target
@@ -151,4 +156,52 @@ def _authorization_plan(
     return AuthorizationTestPlan(
         accounts=declared,
         credentials=CredentialSet.from_environment(declared, environ),
+    )
+
+
+def build_conversational_adapter(
+    target: Target, transport: "GatedTransport"
+) -> "ConversationalAdapter | None":
+    """The adapter for this target's chat surface, or `None`.
+
+    `None` means the operator did not configure one, and the AI engine then
+    declines rather than guessing an endpoint and a wire format. A guessed
+    adapter would send adversarial prompts at a URL nobody authorized in
+    that shape.
+    """
+    kind = (target.adapter_kind or "").strip().lower()
+    if not kind:
+        return None
+
+    config = dict(target.adapter_config or {})
+    config.setdefault("base_url", target.base_url)
+
+    if kind == "chat_http":
+        return ChatHttpAdapter(ChatHttpConfig(**config), transport)
+    if kind == "openai_compatible":
+        return OpenAiCompatibleAdapter(OpenAiCompatibleConfig(**config), transport)
+    raise ValueError(f"unknown adapter kind {target.adapter_kind!r}")
+
+
+def build_ai_probe_target(
+    target: Target, *, safe_mode: bool, trials: int | None = None
+) -> AiProbeTarget:
+    """The AI engine's view of the target, including its declared tools."""
+    return AiProbeTarget(
+        name=target.name,
+        surface=f"{(target.adapter_kind or 'chat').upper()} {target.base_url}",
+        safe_mode=safe_mode,
+        declared_tools=tuple(
+            DeclaredTool(
+                name=str(tool.get("name", "")),
+                description=str(tool.get("description", "")),
+                writes=bool(tool.get("writes", False)),
+                irreversible=bool(tool.get("irreversible", False)),
+                external=bool(tool.get("external", False)),
+                requires_confirmation=bool(tool.get("requires_confirmation", False)),
+            )
+            for tool in (target.declared_tools or [])
+            if isinstance(tool, dict) and tool.get("name")
+        ),
+        trials=trials,
     )

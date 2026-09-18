@@ -16,8 +16,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.orchestrator.ai_check import AiSecurityCheck
 from app.core.orchestrator.checks import Check, Endpoint, ReachabilityCheck
-from app.core.orchestrator.context_builder import build_probe_target, build_run_context
+from app.core.orchestrator.context_builder import (
+    build_ai_probe_target,
+    build_conversational_adapter,
+    build_probe_target,
+    build_run_context,
+)
 from app.core.orchestrator.probe_check import ProbeCheck
 from app.core.orchestrator.runner import RunEventPayload, execute_run
 from app.core.probes.api.registry import build_api_registry
@@ -158,6 +164,19 @@ async def execute_assessment_run(
             probe_check,
         ]
 
+        # The AI engine only runs where the operator configured a chat
+        # adapter. Without one there is no conversational surface to test,
+        # and guessing an endpoint and a wire format would mean sending
+        # adversarial prompts somewhere nobody authorized in that shape.
+        ai_check: AiSecurityCheck | None = None
+        adapter = build_conversational_adapter(target, transport or GatedTransport())
+        if adapter is not None:
+            ai_check = AiSecurityCheck(
+                adapter=adapter,
+                probe_target=build_ai_probe_target(target, safe_mode=run.safe_mode),
+            )
+            checks.append(ai_check)
+
         run.status = RunStatus.RUNNING
         run.started_at = datetime.now(UTC)
         run.checks_total = len(checks)
@@ -187,13 +206,14 @@ async def execute_assessment_run(
 
         outcome = await execute_run(ctx, checks, transport or GatedTransport(), emit)
 
-        await _persist_scan_results(db, run.id, run.organization_id, probe_check.scan_results)
+        all_results = list(probe_check.scan_results)
+        if ai_check is not None:
+            all_results.extend(ai_check.scan_results)
+        await _persist_scan_results(db, run.id, run.organization_id, all_results)
 
         run.status = RunStatus(outcome.status.value)
         run.findings_reported = sum(
-            1
-            for result in probe_check.scan_results
-            if result.severity is not Severity.INFORMATIONAL
+            1 for result in all_results if result.severity is not Severity.INFORMATIONAL
         )
         run.checks_completed = outcome.checks_completed
         run.requests_blocked = outcome.requests_blocked

@@ -350,9 +350,86 @@ Deferred out of Phase 5, with reasons:
 - **No frontend UI for results yet** — same reasoning as the scope, surface
   and runs UIs: they land together against a settled API.
 
+## Phase 6 — AI security engine (this build)
+
+Delivered: the trials/baseline/ASR machinery (Wilson score intervals, an
+explicit decision rule, stability classification) with a determinism harness;
+eleven AI probes covering LLM01 direct injection (six techniques), LLM02
+disclosure, LLM08 hidden context, LLM10 output handling, LLM06 consumption and
+LLM03 excessive agency with a Mermaid permission graph; a standalone
+redaction module; a judge that ships **disabled**; adapter configuration on
+the target; and the AI engine wired into runs. Backend: 276/276 tests
+passing, ruff clean, `mypy app` clean, 95% statement coverage.
+
+Decisions worth stating:
+
+- **The judge ships disabled, and that is the outcome, not a gap.** §7.3 says
+  "an uncalibrated judge does not ship". Publishing precision and recall we
+  have not measured would be worse than having none, so `JudgeConfig` cannot
+  be enabled without a `Calibration`, enforced by the type and by a test.
+  Every detection in this engine is marker-based or structural.
+- **Every payload is a canary request.** A probe succeeds when this run's
+  random marker comes back — never by eliciting harmful output (§2.2).
+  Nothing in `direct_injection.py` is a jailbreak; the techniques tested are
+  structural (override, role framing, delimiter confusion, hierarchy,
+  encoding, language switching), which is what prompt-handling is supposed to
+  withstand and which an instruction as innocuous as "say this word" tests.
+- **Output handling deliberately does not use the ASR decision rule**, and
+  says so in the finding. The adversarial component there *is* the structure,
+  so a control with the structure removed is a plain-text echo — which an
+  application that escapes correctly would also return. Applying the rule
+  anyway would report a reliably vulnerable target as clean, so the probe
+  reports deterministic reachability and carries the echo rate as context.
+- **A tool surface is never guessed.** An empty declaration means "not
+  declared", so the agency probe reports "not tested" rather than a clean
+  permission graph. Architectural findings are valid at `DESIGN_REVIEW`
+  confidence: an agent holding an irreversible external tool behind no
+  confirmation is a real finding, and establishing it by triggering the tool
+  would cause the irreversible effect being warned about.
+
+Three bugs found while building, each now covered by a test:
+
+- The trial driver **pooled trials across different techniques**, so one
+  framing that worked every time and two that never did averaged into
+  "inconclusive" — reporting a reliably exploitable target as clean. It now
+  measures each technique separately and reports the strongest, naming it.
+- `measurement_evidence` printed **raw response text**, so a credential the
+  target disclosed reached the finding. Redaction now happens once, in the
+  driver, when a trial is recorded — for every AI probe, not just the one
+  looking for secrets.
+- `.capitalize()` on a prompt containing the canary **lowercased the marker**,
+  which silently made the affected controls unable to ever succeed.
+
+Deferred out of Phase 6, with reasons:
+
+- **The acceptance criterion is met against fixture apps, not the demo lab**
+  (same as Phase 5). `tests/lab/ai_handlers.py` holds a seeded-vulnerable chat
+  app and a hardened control, served through the real adapter, transport and
+  scope engine with only the socket replaced. The engine finds all 11 seeded
+  flaws and reports nothing against the control; removing one hardening
+  measure from the control was verified to fail that test. They are
+  deterministic stand-ins for model behaviour, which is what lets the test
+  measure the engine rather than a model's variance — the statistics are
+  covered separately by the determinism harness.
+- **Indirect/cross-domain injection (LLM01) is not implemented.** §9 requires
+  its carriers to be "served from the local content-server lab component
+  only", and that component is Phase 12. Serving hostile HTML/PDF/DOCX from
+  anywhere else to prove the path would mean planting attacker-controlled
+  content somewhere we do not control.
+- **LLM09 vector/embedding weaknesses are not implemented** — §9 restricts
+  active poisoning to an authorized lab ingestion path, which does not exist
+  yet.
+- **LLM04/LLM05 supply chain and poisoning are not implemented** — inventory
+  and ML-BOM work belongs with the SBOM tooling in Phase 12.
+- **Multi-turn escalation is not implemented** — §9 gates it behind
+  `allow_multi_turn`, and the adapters do not yet carry conversation state.
+- **`aegis-ai replay <finding-id>` (§7.2) is not implemented** — trial records
+  carry the exact prompt and a redacted response, which is what replay needs,
+  but the command itself is Phase 10 with the rest of the CLI.
+
 ## Later phases
 
-See `docs/BUILD_SPEC.md` §26 for the full phase plan (Phases 6–13: AI
-security engine, findings & risk, evidence & reporting,
+See `docs/BUILD_SPEC.md` §26 for the full phase plan (Phases 7–13: findings
+& risk, evidence & reporting,
 remediation & retest, CLI/CI gate, plugins, demo lab & hardening,
 documentation & release).

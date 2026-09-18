@@ -13,6 +13,8 @@ from app.core.scope.dns import DnsResolver, SystemDnsResolver
 from app.core.scope.engine import ScopeEngine
 from app.core.scope.errors import AuthorizationRequiredError, RoEValidationError
 from app.core.scope.resolve import resolve_rules_of_engagement
+from app.core.targets.chat_http import ChatHttpConfig
+from app.core.targets.openai_compatible import OpenAiCompatibleConfig
 from app.models.authorization import Authorization
 from app.models.organization import Membership, Role
 from app.models.rules_of_engagement import RulesOfEngagementRecord
@@ -23,7 +25,7 @@ from app.schemas.scope import (
     ScopeExplainRequest,
     ScopeExplainResponse,
 )
-from app.schemas.target import TargetCreate, TargetRead
+from app.schemas.target import TargetAdapterUpdate, TargetCreate, TargetRead
 
 router = APIRouter(prefix="/organizations/{organization_id}/targets", tags=["targets"])
 
@@ -46,6 +48,9 @@ def _target_read(target: Target) -> TargetRead:
         environment=target.environment,
         kind=target.kind,
         base_url=target.base_url,
+        adapter_kind=target.adapter_kind,
+        adapter_config=dict(target.adapter_config or {}),
+        declared_tools=list(target.declared_tools or []),
         has_authorization=target.authorization is not None,
         has_rules_of_engagement=target.rules_of_engagement is not None,
         created_at=target.created_at,
@@ -318,3 +323,58 @@ async def explain_scope(
     return ScopeExplainResponse(
         allowed=decision.allowed, rule=decision.rule, reason=decision.reason
     )
+
+
+@router.put("/{target_id}/adapter", response_model=TargetRead)
+async def configure_adapter(
+    organization_id: uuid.UUID,
+    target_id: uuid.UUID,
+    payload: TargetAdapterUpdate,
+    request: Request,
+    db: DbSession,
+    membership: Membership = Depends(require_membership(Role.SECURITY_ENGINEER)),  # noqa: B008
+) -> TargetRead:
+    """Configure the conversational adapter and declare the tool surface.
+
+    The configuration is validated by constructing the adapter here rather
+    than at scan time, so a bad response path or a missing prompt
+    placeholder is a 422 now instead of a failed run later
+    (docs/BUILD_SPEC.md §8).
+    """
+    target = await load_target(organization_id, target_id, db)
+
+    config = dict(payload.adapter_config)
+    config.setdefault("base_url", target.base_url)
+    try:
+        if payload.adapter_kind == "chat_http":
+            ChatHttpConfig(**config)
+        else:
+            OpenAiCompatibleConfig(**config)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"invalid {payload.adapter_kind} configuration: {exc}",
+        ) from exc
+
+    target.adapter_kind = payload.adapter_kind
+    target.adapter_config = config
+    target.declared_tools = [tool.model_dump() for tool in payload.declared_tools]
+    await db.flush()
+
+    await record_event(
+        db,
+        action="target.adapter.configure",
+        resource_type="target",
+        resource_id=str(target.id),
+        result="allow",
+        organization_id=organization_id,
+        user_id=membership.user_id,
+        ip_address=request.client.host if request.client else None,
+        metadata={
+            "adapter_kind": payload.adapter_kind,
+            "declared_tools": len(payload.declared_tools),
+        },
+    )
+    await db.commit()
+
+    return _target_read(target)

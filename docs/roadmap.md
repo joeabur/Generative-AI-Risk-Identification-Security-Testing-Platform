@@ -427,9 +427,91 @@ Deferred out of Phase 6, with reasons:
   carry the exact prompt and a redacted response, which is what replay needs,
   but the command itself is Phase 10 with the rest of the CLI.
 
+## Phase 14 — AppSec engines: SAST, SCA, Secrets, IaC (this build)
+
+The first phase of the reconciled plan (`docs/IMPLEMENTATION_PLAN.md`).
+Delivered: the `code_scope` domain model and a fail-closed workspace
+resolver; a subprocess tool layer; identifier verification; static
+fingerprinting; four engines (Semgrep and Bandit for SAST, pip-audit for
+SCA, a repository secret scanner, Checkov for IaC); a `CodeScanCheck` for
+the orchestrator; and the code-scope API. A vulnerable repository fixture
+and a hardened control repository sit alongside the existing app fixtures.
+
+**Acceptance met.** Nine seeded flaws across four pillars are found in the
+vulnerable fixture, and the hardened control produces **zero** findings.
+Both directions were verified to have teeth: reverting one hardening measure
+in the control (`yaml.safe_load` back to `yaml.load`) fails the control test.
+
+Decisions worth stating:
+
+- **An empty `allowed_paths` is refused, not read as "everything".** A
+  checkout with no stated boundary may contain a second project or a
+  developer's credentials. This is §6.2's fail-closed rule applied to a
+  repository, and it is enforced in the `CodeScope` constructor so no code
+  path can bypass it.
+- **A repository over the size cap is refused rather than truncated.** A
+  partial scan reported as a complete one is the dishonest outcome.
+- **Semgrep runs offline against a bundled local ruleset.** `--config
+  p/default` downloads rules, and a subprocess that reaches the network is an
+  outbound path §6.3 governs just as it governs an `httpx` client. A registry
+  ruleset remains available as an explicit operator choice. The bundled rules
+  are deliberately few, per the addendum's limit on native rules, and include
+  `aegis.ungated-http-client` — this platform dogfooding its own central rule.
+- **Dependency advisory lookup is off by default.** Matching a dependency
+  graph means sending the client's dependency list to whoever runs the
+  advisory database. That is a disclosure an operator opts into per
+  assessment, so the default reports the inventory and states plainly that no
+  matching was performed — an empty result would read as "no vulnerable
+  dependencies", which is a very different claim.
+- **Bandit's B404/B603/B607 are downgraded to informational, not
+  suppressed.** They flag the presence of an API rather than a misuse of it
+  and fire on correctly-written code; a scanner whose clean state is
+  unreachable teaches its users to ignore it. They stay in the result set,
+  attributed and explained, and simply do not count as findings. The reason
+  is written into each finding's own description.
+- **Fingerprints use a code-span signature, never a line number.** Line
+  numbers drift on unrelated edits, so fingerprinting on them would split one
+  long-lived issue into a new finding on every commit that touched the file
+  above it.
+- **Secret detection reuses the Phase 6 detector stack.** Two
+  implementations would mean two redaction policies, which is how the §13
+  "never persist a secret" invariant gets broken.
+- **Checkov findings outside the code scope are dropped.** Checkov is pointed
+  at the workspace root and does not honour our scope natively, so the
+  adapter re-filters its output. The scope boundary stays authoritative even
+  when a tool does not enforce it.
+
+Deferred out of Phase 14, with reasons:
+
+- **No repository checkout yet.** `Target.code_repo_ref` is stored and the
+  engines run against a local path, but nothing clones a remote repository.
+  Cloning is a network operation that belongs behind the scope engine and
+  needs credential handling of its own; the engines and the scope model are
+  the part that had to be right first.
+- **Container image and CI-artifact scanning are not implemented.** The
+  addendum lists both as secret-scanning surfaces. They need an image-pull
+  path, which is the same missing piece as the checkout above.
+- **CodeQL is not integrated** — §15 requires verifying its licence before
+  integrating, and that verification has not been done.
+- **No cross-engine deduplication.** A SAST finding and a DAST finding
+  describing the same underlying defect are two findings. The addendum
+  explicitly puts this out of scope for v1; faking a correlation heuristic
+  would be worse than the honest gap. Correlation belongs with the findings
+  service in Phase 7 and the AI layer in Phase 16.
+- **`nist_ssdf` mappings are not yet emitted.** The key exists in the finding
+  schema, but §3.4's discipline requires verifying each practice against a
+  pinned source first, and that ingestion has not been done. Emitting
+  unverified practice ids would be exactly the invented-mapping failure the
+  spec forbids.
+- **The run pipeline does not yet execute `CodeScanCheck`.** The check, the
+  workspace builder and the API all exist and are tested; wiring it into
+  `execute_assessment_run` needs the checkout step above to be meaningful,
+  so it lands with it rather than shipping a code scan that can only ever
+  scan an empty directory.
+
 ## Later phases
 
-See `docs/BUILD_SPEC.md` §26 for the full phase plan (Phases 7–13: findings
-& risk, evidence & reporting,
+See `docs/BUILD_SPEC.md` §26 for the full phase plan. Remaining: Phases 7–13
+(findings & risk, evidence & reporting,
 remediation & retest, CLI/CI gate, plugins, demo lab & hardening,
 documentation & release).

@@ -31,6 +31,26 @@ class TargetCreate(BaseModel):
     base_url: str = Field(min_length=1, max_length=2048)
 
 
+class CodeScopeIn(BaseModel):
+    """Which paths inside a checkout may be read.
+
+    `allowed_paths` has no default: an unstated boundary is not a permissive
+    one, and the engines refuse to run until it is declared
+    (docs/BUILD_SPEC.md §4.5, §6.2).
+    """
+
+    allowed_paths: list[str] = Field(min_length=1, max_length=200)
+    excluded_paths: list[str] = Field(default_factory=list, max_length=200)
+    max_repo_size_mb: int = Field(default=500, ge=1, le=10_000)
+
+
+class TargetCodeUpdate(BaseModel):
+    repo_ref: str = Field(min_length=1, max_length=2048)
+    languages: list[str] = Field(default_factory=list, max_length=20)
+    build_manifest_paths: list[str] = Field(default_factory=list, max_length=50)
+    code_scope: CodeScopeIn
+
+
 class TargetAdapterUpdate(BaseModel):
     """Which adapter speaks to this target's chat surface, and how."""
 
@@ -50,6 +70,9 @@ class TargetRead(BaseModel):
     base_url: str
     adapter_kind: str | None
     adapter_config: dict[str, Any]
+    code_repo_ref: str | None
+    code_languages: list[str]
+    code_build_manifest_paths: list[str]
     declared_tools: list[dict[str, Any]]
     has_authorization: bool
     has_rules_of_engagement: bool

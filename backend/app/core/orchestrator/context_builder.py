@@ -8,7 +8,15 @@ part of the pure engine.
 """
 
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 
+from app.core.appsec.workspace import (
+    DEFAULT_MAX_REPO_SIZE_MB,
+    CodeScope,
+    CodeScopeError,
+    Workspace,
+    resolve_workspace,
+)
 from app.core.discovery.openapi import (
     DiscoveredBodyField,
     DiscoveredOperation,
@@ -204,4 +212,34 @@ def build_ai_probe_target(
             if isinstance(tool, dict) and tool.get("name")
         ),
         trials=trials,
+    )
+
+
+def build_workspace(target: Target, checkout: "Path") -> "Workspace":
+    """Resolve a target's declared code scope against a local checkout.
+
+    Raises `CodeScopeError` when the Rules of Engagement carry no
+    `code_scope`. That is the same fail-closed refusal §6.2 applies to an
+    unresolved URL scope: a checkout with no stated boundary may contain a
+    second project, or a developer's credentials, and "everything" is never
+    the safe reading of silence.
+    """
+    roe = target.rules_of_engagement
+    raw = dict(roe.code_scope or {}) if roe is not None else {}
+    if not raw:
+        raise CodeScopeError(
+            "No code_scope is configured for this target. Declare which paths may be "
+            "scanned before running the SAST, SCA, secrets or IaC engines."
+        )
+
+    scope = CodeScope(
+        allowed_paths=tuple(str(item) for item in raw.get("allowed_paths", [])),
+        excluded_paths=tuple(str(item) for item in raw.get("excluded_paths", [])),
+        max_repo_size_mb=int(raw.get("max_repo_size_mb", DEFAULT_MAX_REPO_SIZE_MB)),
+    )
+    return resolve_workspace(
+        checkout,
+        scope,
+        languages=tuple(str(item) for item in (target.code_languages or [])),
+        build_manifest_paths=tuple(str(item) for item in (target.code_build_manifest_paths or [])),
     )

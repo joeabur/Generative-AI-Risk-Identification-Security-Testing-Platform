@@ -65,6 +65,12 @@ class Target(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # a tool surface is never inferred, so an empty list means "not
     # declared" and the agency probe says so.
     declared_tools: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    # Source-code surface (Addendum v2.1 §3). Absent means the SAST, SCA,
+    # secrets-in-source and IaC engines refuse to run — the same fail-closed
+    # rule the scope engine applies to a URL, applied to a checkout.
+    code_repo_ref: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    code_languages: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    code_build_manifest_paths: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
     created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

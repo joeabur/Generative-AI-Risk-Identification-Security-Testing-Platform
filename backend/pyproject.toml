@@ -36,6 +36,17 @@ dev = [
     "pytest-cov>=5.0",
     "types-PyYAML>=6.0",
 ]
+# The AppSec scanners. Optional at runtime by design (§15): an adapter whose
+# tool is absent reports that it did not run rather than crashing or, worse,
+# returning nothing and looking clean. They are in `dev` as well so CI can
+# actually exercise the engines against the lab fixtures.
+appsec = [
+    "semgrep>=1.90",
+    "bandit>=1.7",
+    "pip-audit>=2.7",
+    "checkov>=3.2",
+    "detect-secrets>=1.5",
+]
 
 [build-system]
 requires = ["setuptools>=68", "wheel"]

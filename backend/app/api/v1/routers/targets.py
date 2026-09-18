@@ -25,7 +25,12 @@ from app.schemas.scope import (
     ScopeExplainRequest,
     ScopeExplainResponse,
 )
-from app.schemas.target import TargetAdapterUpdate, TargetCreate, TargetRead
+from app.schemas.target import (
+    TargetAdapterUpdate,
+    TargetCodeUpdate,
+    TargetCreate,
+    TargetRead,
+)
 
 router = APIRouter(prefix="/organizations/{organization_id}/targets", tags=["targets"])
 
@@ -49,6 +54,9 @@ def _target_read(target: Target) -> TargetRead:
         kind=target.kind,
         base_url=target.base_url,
         adapter_kind=target.adapter_kind,
+        code_repo_ref=target.code_repo_ref,
+        code_languages=[str(item) for item in (target.code_languages or [])],
+        code_build_manifest_paths=[str(item) for item in (target.code_build_manifest_paths or [])],
         adapter_config=dict(target.adapter_config or {}),
         declared_tools=list(target.declared_tools or []),
         has_authorization=target.authorization is not None,
@@ -373,6 +381,63 @@ async def configure_adapter(
         metadata={
             "adapter_kind": payload.adapter_kind,
             "declared_tools": len(payload.declared_tools),
+        },
+    )
+    await db.commit()
+
+    return _target_read(target)
+
+
+@router.put("/{target_id}/code", response_model=TargetRead)
+async def configure_code_scope(
+    organization_id: uuid.UUID,
+    target_id: uuid.UUID,
+    payload: TargetCodeUpdate,
+    request: Request,
+    db: DbSession,
+    membership: Membership = Depends(require_membership(Role.ADMIN)),  # noqa: B008
+) -> TargetRead:
+    """Declare the source-code surface and the paths that may be scanned.
+
+    Admin-only, like the authorization grant: pointing an assessment at a
+    repository asserts entitlement to read it. Rules of Engagement must
+    already exist, because `code_scope` lives on them — the boundary is part
+    of the engagement, not a property of the target
+    (docs/BUILD_SPEC.md §4.5; Addendum v2.1 §3).
+    """
+    target = await load_target(organization_id, target_id, db)
+    if target.rules_of_engagement is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail=(
+                "Configure Rules of Engagement before declaring a code scope: the "
+                "scope is part of the engagement."
+            ),
+        )
+
+    target.code_repo_ref = payload.repo_ref
+    target.code_languages = list(payload.languages)
+    target.code_build_manifest_paths = list(payload.build_manifest_paths)
+    target.rules_of_engagement.code_scope = {
+        "allowed_paths": list(payload.code_scope.allowed_paths),
+        "excluded_paths": list(payload.code_scope.excluded_paths),
+        "max_repo_size_mb": payload.code_scope.max_repo_size_mb,
+    }
+    await db.flush()
+
+    await record_event(
+        db,
+        action="target.code_scope.configure",
+        resource_type="target",
+        resource_id=str(target.id),
+        result="allow",
+        organization_id=organization_id,
+        user_id=membership.user_id,
+        ip_address=request.client.host if request.client else None,
+        metadata={
+            "repo_ref": payload.repo_ref,
+            "allowed_paths": len(payload.code_scope.allowed_paths),
+            "excluded_paths": len(payload.code_scope.excluded_paths),
         },
     )
     await db.commit()

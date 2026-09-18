@@ -62,3 +62,8 @@ class ScanResult:
     # "every finding: ... reproduction steps"). Probes fill this from what
     # they actually sent, never from a template.
     reproduction: tuple[str, ...] = field(default=())
+    # A stable identity for this result across runs, where the engine can
+    # compute one. Static findings can (rule + path + code span); a
+    # dynamic probe's identity depends on the surface it tested, so it is
+    # left to the findings service in Phase 7 rather than guessed here.
+    fingerprint: str | None = None

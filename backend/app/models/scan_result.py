@@ -54,5 +54,9 @@ class ScanResultRecord(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     probe_version: Mapped[str] = mapped_column(String(50), nullable=False)
     frameworks: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
     reproduction: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    # Set by engines that can compute a stable identity (rule + path + code
+    # span). Nullable because a dynamic probe's fingerprint is the findings
+    # service's job, and a guessed one would be worse than none.
+    fingerprint: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
 
     run: Mapped["AssessmentRun"] = relationship(back_populates="scan_results")

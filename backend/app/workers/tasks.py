@@ -110,6 +110,7 @@ async def _persist_scan_results(
                 probe_version=result.probe_version,
                 frameworks=list(result.frameworks),
                 reproduction=list(result.reproduction),
+                fingerprint=result.fingerprint,
             )
         )
     await db.commit()

@@ -75,3 +75,4 @@ class ScanResultRead(BaseModel):
     probe_version: str
     frameworks: list[str]
     reproduction: list[str]
+    fingerprint: str | None

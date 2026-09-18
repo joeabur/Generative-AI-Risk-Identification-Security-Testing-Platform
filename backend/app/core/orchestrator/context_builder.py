@@ -236,6 +236,7 @@ def build_workspace(target: Target, checkout: "Path") -> "Workspace":
         allowed_paths=tuple(str(item) for item in raw.get("allowed_paths", [])),
         excluded_paths=tuple(str(item) for item in raw.get("excluded_paths", [])),
         max_repo_size_mb=int(raw.get("max_repo_size_mb", DEFAULT_MAX_REPO_SIZE_MB)),
+        allowed_repo_hosts=tuple(str(item) for item in raw.get("allowed_repo_hosts", [])),
     )
     return resolve_workspace(
         checkout,

@@ -481,13 +481,50 @@ Decisions worth stating:
   adapter re-filters its output. The scope boundary stays authoritative even
   when a tool does not enforce it.
 
-Deferred out of Phase 14, with reasons:
+### Phase 14b — repository checkout and run-pipeline wiring
 
-- **No repository checkout yet.** `Target.code_repo_ref` is stored and the
-  engines run against a local path, but nothing clones a remote repository.
-  Cloning is a network operation that belongs behind the scope engine and
-  needs credential handling of its own; the engines and the scope model are
-  the part that had to be right first.
+The deferred half of Phase 14. A run against a target with a `repo_ref` now
+clones the repository, scans it, persists the findings and deletes the
+checkout.
+
+`git` does not route through `GatedTransport`, so every control the transport
+would have applied is applied before `git` starts:
+
+- **The repository host must be explicitly allowlisted.** A `repo_ref` is
+  operator-supplied and therefore untrusted input; without an allowlist it is
+  a request-forgery primitive aimed at whatever the worker can reach. An
+  empty `allowed_repo_hosts` permits nothing.
+- **The resolved address is checked against the scope engine's own blocked
+  ranges** via `is_blocked_ip`, not a second list. An allowlisted name that
+  points at loopback, RFC1918 or `169.254.169.254` is still refused.
+- **Only `https` and `file` are accepted.** `ext::` makes a clone arbitrary
+  command execution; `git://` is unauthenticated plaintext.
+- **Hooks are disabled, submodules are never fetched, and the terminal
+  prompt is off**, so a repository cannot execute its own code, pull content
+  from a host that bypassed the checks above, or hang waiting for credentials.
+- **The checkout is deleted in a `finally`,** including when the clone fails
+  part-way. A working copy of a client's repository is precisely what must
+  not be left on a worker: it is the material the secret scan just found
+  credentials in.
+
+A host that fails these checks skips code scanning and records why in the run
+event log; the rest of the assessment is unaffected.
+
+Two bugs the end-to-end test exposed, both fixed:
+
+- **The scope engine reported an ordinary DNS failure as
+  `internal_error` and halted the whole run.** A hostname that does not
+  resolve is a normal outcome, not an engine fault. It now has its own rule
+  (`dns_resolution_failed`), still fails closed — without an address there is
+  no way to prove the host is not internal — but no longer aborts an
+  assessment because one host is dead.
+- **A file-reading check was skipped once the request budget halted.** A
+  budget bounds outbound requests; it is not a general stop signal. Checks
+  now declare `requires_network`, and the code engines — which spend no
+  requests — keep running after a budget halt. An operator cancellation still
+  stops everything.
+
+Still deferred:
 - **Container image and CI-artifact scanning are not implemented.** The
   addendum lists both as secret-scanning surfaces. They need an image-pull
   path, which is the same missing piece as the checkout above.

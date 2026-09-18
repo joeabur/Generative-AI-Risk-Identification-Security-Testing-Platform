@@ -29,13 +29,16 @@ class CodeScanCheck:
     workspace: Workspace
     id: str = "core.appsec"
     name: str = "AppSec engines"
+    # These engines read files. An exhausted request budget is not a reason
+    # to skip them, though an operator cancellation still is.
+    requires_network: bool = False
     scan_results: list[ScanResult] = field(default_factory=list)
 
     async def run(self, ctx: RunContext, transport: GatedTransport) -> list[CheckResult]:
         results: list[CheckResult] = []
 
         for engine in self.engines:
-            if ctx.halted or ctx.kill_switch.tripped:
+            if ctx.kill_switch.tripped:
                 break
             if not engine.applies_to(self.workspace):
                 continue

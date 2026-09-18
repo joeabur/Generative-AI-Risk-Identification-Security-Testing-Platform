@@ -151,7 +151,29 @@ class ScopeEngine:
                     False, "forbidden_header", f"{forbidden} is a forbidden header"
                 )
 
-        ips = await dns_resolver.resolve(hostname)
+        try:
+            ips = await dns_resolver.resolve(hostname)
+        except Exception as exc:  # noqa: BLE001 - an unresolvable host is a normal outcome
+            # Fail closed — without an address there is no way to prove the
+            # host is not internal, so the request is refused. But this is
+            # **not** a halt: a hostname that does not resolve says nothing
+            # about the other work in this run, and treating it as an engine
+            # fault let one dead host abort an entire assessment.
+            return ScopeDecision(
+                False,
+                "dns_resolution_failed",
+                f"{hostname} could not be resolved ({exc}); refusing to send without "
+                "being able to check the address",
+            )
+
+        if not ips:
+            return ScopeDecision(
+                False,
+                "dns_resolution_failed",
+                f"{hostname} resolved to no addresses; refusing to send without being "
+                "able to check the address",
+            )
+
         allowed_ranges = parse_ip_ranges(ctx.roe.allowed_ip_ranges)
         for ip in ips:
             if is_blocked_ip(ip, allowed_ranges):

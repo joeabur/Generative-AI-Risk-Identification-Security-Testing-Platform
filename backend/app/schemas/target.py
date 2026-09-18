@@ -42,6 +42,9 @@ class CodeScopeIn(BaseModel):
     allowed_paths: list[str] = Field(min_length=1, max_length=200)
     excluded_paths: list[str] = Field(default_factory=list, max_length=200)
     max_repo_size_mb: int = Field(default=500, ge=1, le=10_000)
+    # Required before a remote repository can be cloned. Left empty, only a
+    # local checkout is possible — which is the safe default.
+    allowed_repo_hosts: list[str] = Field(default_factory=list, max_length=20)
 
 
 class TargetCodeUpdate(BaseModel):

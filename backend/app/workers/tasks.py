@@ -9,6 +9,7 @@ import hashlib
 import json
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import structlog
@@ -16,13 +17,25 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.core.appsec.checkout import (
+    CheckoutError,
+    check_host_allowed,
+    clone_repository,
+    discard_checkout,
+    make_checkout_dir,
+    parse_repo_ref,
+)
+from app.core.appsec.registry import appsec_engines
+from app.core.appsec.workspace import CodeScopeError
 from app.core.orchestrator.ai_check import AiSecurityCheck
 from app.core.orchestrator.checks import Check, Endpoint, ReachabilityCheck
+from app.core.orchestrator.code_check import CodeScanCheck
 from app.core.orchestrator.context_builder import (
     build_ai_probe_target,
     build_conversational_adapter,
     build_probe_target,
     build_run_context,
+    build_workspace,
 )
 from app.core.orchestrator.probe_check import ProbeCheck
 from app.core.orchestrator.runner import RunEventPayload, execute_run
@@ -169,6 +182,7 @@ async def execute_assessment_run(
         # adapter. Without one there is no conversational surface to test,
         # and guessing an endpoint and a wire format would mean sending
         # adversarial prompts somewhere nobody authorized in that shape.
+        checkout_dir: Path | None = None
         ai_check: AiSecurityCheck | None = None
         adapter = build_conversational_adapter(target, transport or GatedTransport())
         if adapter is not None:
@@ -177,6 +191,30 @@ async def execute_assessment_run(
                 probe_target=build_ai_probe_target(target, safe_mode=run.safe_mode),
             )
             checks.append(ai_check)
+
+        # The code engines need a checkout. It is created here and removed in
+        # the `finally` below whatever happens: a working copy of a client's
+        # repository is precisely what must not be left on a worker, since it
+        # is the material a secret scan just found credentials in.
+        code_check: CodeScanCheck | None = None
+        if target.code_repo_ref:
+            checkout_dir = make_checkout_dir()
+            try:
+                code_check = await _prepare_code_check(target, checkout_dir)
+                checks.append(code_check)
+            except (CheckoutError, CodeScopeError) as exc:
+                # Discard here rather than clearing the variable: a clone that
+                # failed part-way has still written files, and leaving them
+                # behind is the leak this whole path exists to avoid.
+                discard_checkout(checkout_dir)
+                checkout_dir = None
+                await _record_event(
+                    db,
+                    run.id,
+                    RunEventKind.CHECK_COMPLETED,
+                    f"Code scanning skipped: {exc}",
+                    {"reason": str(exc)},
+                )
 
         run.status = RunStatus.RUNNING
         run.started_at = datetime.now(UTC)
@@ -205,11 +243,17 @@ async def execute_assessment_run(
                 db, run.id, RunEventKind(event.kind.value), event.message, dict(event.data)
             )
 
-        outcome = await execute_run(ctx, checks, transport or GatedTransport(), emit)
+        try:
+            outcome = await execute_run(ctx, checks, transport or GatedTransport(), emit)
+        finally:
+            if checkout_dir is not None:
+                discard_checkout(checkout_dir)
 
         all_results = list(probe_check.scan_results)
         if ai_check is not None:
             all_results.extend(ai_check.scan_results)
+        if code_check is not None:
+            all_results.extend(code_check.scan_results)
         await _persist_scan_results(db, run.id, run.organization_id, all_results)
 
         run.status = RunStatus(outcome.status.value)
@@ -249,3 +293,25 @@ def run_assessment(run_id: str) -> str:
             await dispose_engine()
 
     return asyncio.run(_run()).value
+
+
+async def _prepare_code_check(target: Target, checkout_dir: "Path") -> CodeScanCheck:
+    """Clone the target's repository and build the code check for it.
+
+    Every control the gated transport would have applied to an outbound
+    request is applied before `git` starts: the host must be allowlisted,
+    its address must not be one the scope engine blocks, and the scheme must
+    be one that cannot execute commands.
+    """
+    roe = target.rules_of_engagement
+    raw_scope = dict(roe.code_scope or {}) if roe is not None else {}
+    ref = parse_repo_ref(str(target.code_repo_ref))
+
+    check_host_allowed(
+        ref,
+        tuple(str(item) for item in raw_scope.get("allowed_repo_hosts", [])),
+        allowed_ip_ranges=tuple(str(item) for item in (roe.allowed_ip_ranges if roe else [])),
+    )
+    await clone_repository(ref, checkout_dir / "repo")
+    workspace = build_workspace(target, checkout_dir / "repo")
+    return CodeScanCheck(engines=appsec_engines(), workspace=workspace)

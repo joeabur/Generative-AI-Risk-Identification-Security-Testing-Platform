@@ -226,3 +226,61 @@ async def test_unreachable_target_is_a_result_not_a_crash(fake_dns: FakeDnsResol
     assert outcome.status is RunOutcomeStatus.COMPLETED
     assert outcome.results[0].ok is False
     assert "request failed" in outcome.results[0].detail
+
+
+async def test_a_file_reading_check_still_runs_after_the_request_budget_halts(
+    fake_dns: FakeDnsResolver,
+) -> None:
+    """A budget bounds outbound requests; it is not a general stop signal.
+
+    Treating it as one silently dropped code scanning from any run with a
+    modest request budget — the network checks exhausted it and the file
+    engines, which would not have spent a single request, never ran.
+    """
+    ran: list[str] = []
+
+    class _FileCheck:
+        id = "test.files"
+        name = "File check"
+        requires_network = False
+
+        async def run(self, ctx: RunContext, transport: GatedTransport) -> list[CheckResult]:
+            ran.append(self.id)
+            return [CheckResult(check_id=self.id, surface="src/", ok=True, detail="read files")]
+
+    ctx = make_context(roe=make_roe(budgets=make_budgets(max_requests=1)))
+    emit = _Recorder()
+
+    with respx.mock(assert_all_called=False) as router:
+        router.get(f"{BASE_URL}/a").mock(return_value=Response(200))
+        router.get(f"{BASE_URL}/b").mock(return_value=Response(200))
+        outcome = await execute_run(
+            ctx, [_check("/a", "/b"), _FileCheck()], _transport(fake_dns), emit
+        )
+
+    assert ctx.halted is True
+    assert ran == ["test.files"]
+    assert outcome.checks_completed == 2
+
+
+async def test_an_operator_cancellation_stops_even_a_file_reading_check(
+    fake_dns: FakeDnsResolver,
+) -> None:
+    ran: list[str] = []
+
+    class _FileCheck:
+        id = "test.files"
+        name = "File check"
+        requires_network = False
+
+        async def run(self, ctx: RunContext, transport: GatedTransport) -> list[CheckResult]:
+            ran.append(self.id)
+            return []
+
+    ctx = make_context()
+    ctx.kill_switch.trip()
+
+    outcome = await execute_run(ctx, [_FileCheck()], _transport(fake_dns), _Recorder())
+
+    assert ran == []
+    assert outcome.status is RunOutcomeStatus.CANCELLED

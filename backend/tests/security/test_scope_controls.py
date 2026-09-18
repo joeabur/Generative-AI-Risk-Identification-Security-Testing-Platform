@@ -398,10 +398,43 @@ def test_roe_fails_schema_validation_refuses_run() -> None:
 # --- fail-closed on internal error ------------------------------------------
 
 
-async def test_scope_engine_raises_internally_fails_closed() -> None:
+async def test_scope_engine_raises_internally_fails_closed(fake_dns: FakeDnsResolver) -> None:
+    """An unexpected fault anywhere in the engine blocks and halts.
+
+    The failure is injected into the budget tracker rather than into DNS: a
+    hostname that will not resolve is an ordinary outcome with its own rule
+    (below), and using it here would no longer exercise this path.
+    """
+    engine = ScopeEngine()
+    ctx = make_context()
+
+    class ExplodingBudgets:
+        def __getattr__(self, name: str) -> object:
+            raise RuntimeError("boom")
+
+    ctx.budgets = ExplodingBudgets()  # type: ignore[assignment]
+
+    decision = await engine.check(
+        ctx, dns_resolver=fake_dns, method="GET", url="https://ai.example.test/api"
+    )
+
+    assert decision.allowed is False
+    assert decision.rule == "internal_error"
+    assert decision.halted is True
+
+
+async def test_a_host_that_does_not_resolve_is_blocked_but_does_not_halt_the_run() -> None:
+    """Fail closed without an address — there is no way to prove the host is
+    not internal — but do not treat it as an engine fault.
+
+    A hostname that does not resolve says nothing about the rest of the run.
+    Halting on it let one dead host abort an entire assessment, including the
+    checks that read files and make no requests at all.
+    """
+
     class ExplodingResolver:
         async def resolve(self, hostname: str) -> list:
-            raise RuntimeError("boom")
+            raise OSError("Name or service not known")
 
     engine = ScopeEngine()
     ctx = make_context()
@@ -411,8 +444,25 @@ async def test_scope_engine_raises_internally_fails_closed() -> None:
     )
 
     assert decision.allowed is False
-    assert decision.rule == "internal_error"
-    assert decision.halted is True
+    assert decision.rule == "dns_resolution_failed"
+    assert decision.halted is False
+    assert ctx.halted is False
+
+
+async def test_a_host_resolving_to_no_addresses_is_blocked() -> None:
+    class EmptyResolver:
+        async def resolve(self, hostname: str) -> list:
+            return []
+
+    engine = ScopeEngine()
+    ctx = make_context()
+
+    decision = await engine.check(
+        ctx, dns_resolver=EmptyResolver(), method="GET", url="https://ai.example.test/api"
+    )
+
+    assert decision.allowed is False
+    assert decision.rule == "dns_resolution_failed"
 
 
 # --- kill switch -------------------------------------------------------------
@@ -605,10 +655,13 @@ async def test_explain_reports_budget_exceeded(fake_dns: FakeDnsResolver) -> Non
     assert decision.rule == "budget_exceeded:tokens_sent"
 
 
-async def test_explain_fails_closed_on_unexpected_error() -> None:
+async def test_explain_reports_an_unresolvable_host_without_halting() -> None:
+    """`explain` is a preview, so it must never halt the run — and an
+    unresolvable host is reported as exactly that rather than as a fault."""
+
     class ExplodingResolver:
         async def resolve(self, hostname: str) -> list:
-            raise RuntimeError("boom")
+            raise OSError("Name or service not known")
 
     engine = ScopeEngine()
     ctx = make_context()
@@ -618,7 +671,8 @@ async def test_explain_fails_closed_on_unexpected_error() -> None:
     )
 
     assert decision.allowed is False
-    assert decision.rule == "internal_error"
+    assert decision.rule == "dns_resolution_failed"
+    assert ctx.halted is False
 
 
 async def test_unparseable_url_blocked(fake_dns: FakeDnsResolver) -> None:
@@ -631,10 +685,10 @@ async def test_unparseable_url_blocked(fake_dns: FakeDnsResolver) -> None:
     assert decision.rule == "unparseable_url"
 
 
-async def test_check_redirect_target_fails_closed_on_unexpected_error() -> None:
+async def test_check_redirect_target_blocks_an_unresolvable_location() -> None:
     class ExplodingResolver:
         async def resolve(self, hostname: str) -> list:
-            raise RuntimeError("boom")
+            raise OSError("Name or service not known")
 
     engine = ScopeEngine()
     ctx = make_context()
@@ -644,4 +698,4 @@ async def test_check_redirect_target_fails_closed_on_unexpected_error() -> None:
     )
 
     assert decision.allowed is False
-    assert decision.rule == "internal_error"
+    assert decision.rule == "dns_resolution_failed"

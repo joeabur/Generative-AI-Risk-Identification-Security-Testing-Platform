@@ -422,6 +422,7 @@ async def configure_code_scope(
         "allowed_paths": list(payload.code_scope.allowed_paths),
         "excluded_paths": list(payload.code_scope.excluded_paths),
         "max_repo_size_mb": payload.code_scope.max_repo_size_mb,
+        "allowed_repo_hosts": list(payload.code_scope.allowed_repo_hosts),
     }
     await db.flush()
 

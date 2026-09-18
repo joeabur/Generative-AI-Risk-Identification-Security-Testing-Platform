@@ -62,6 +62,10 @@ class CodeScope:
     allowed_paths: tuple[str, ...] = ()
     excluded_paths: tuple[str, ...] = ()
     max_repo_size_mb: int = DEFAULT_MAX_REPO_SIZE_MB
+    # Hosts a repository may be cloned from. Empty permits nothing: an
+    # operator-supplied `repo_ref` is untrusted input, and an unstated host
+    # list is not a permissive one (see `checkout.check_host_allowed`).
+    allowed_repo_hosts: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.allowed_paths:

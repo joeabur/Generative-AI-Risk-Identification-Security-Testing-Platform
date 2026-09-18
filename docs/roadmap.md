@@ -546,6 +546,82 @@ Still deferred:
   so it lands with it rather than shipping a code scan that can only ever
   scan an empty directory.
 
+## Phase 16 — AI intelligence layer (this build)
+
+Delivered: an `AIService` with a two-method provider abstraction
+(`generate`, `structured_output`), an OpenAI-compatible provider covering
+hosted and self-hosted endpoints, a deterministic fake provider used
+throughout the tests, the autonomy ladder, versioned prompt templates, an
+`AiDraft` table with an explicit accept step, and the assistant API.
+
+The shape the whole layer enforces (Implementation Specification §10):
+
+    Tool / Engine -> Observation -> Detection -> Finding -> AI interpretation
+
+Decisions worth stating:
+
+- **The provider call goes through the same gated transport as everything
+  else.** The provider endpoint is infrastructure the operator configured,
+  not a target — but that is not a licence to open a second way out of the
+  process, and an AI subsystem is the likeliest place for one to be added by
+  accident. `platform_egress_context` builds a scope allowing the provider's
+  host and nothing else, derived from configuration with no parameter a
+  caller could widen. A provider endpoint resolving to the metadata service
+  is refused exactly as a target would be.
+- **`EXECUTE` is a mode, not a power.** The two source documents appeared to
+  disagree about whether the assistant may execute anything; §4.5 row 7
+  resolves it by asking *execute what*. Producing an artifact is something a
+  mode permits; consuming budget, reaching a target, granting authorization
+  or writing a finding's real fields is in `TARGET_TOUCHING`, checked
+  independently of the mode so that raising the mode cannot grant one. There
+  is no `execute()` on the service at all.
+- **Evidence is fenced as data, and cannot close its own fence.** The
+  material this layer summarises is adversarial by construction — it is
+  harvested from injection probes, and the successful ones contain text
+  written to redirect a reader. It is quoted inside a delimited block whose
+  markers are stripped from the content, under a system prompt stating that
+  nothing inside is an instruction. Passing it unfenced would repeat the
+  mistake the platform tests its clients for.
+- **Counts come from the platform, never from the model.** The executive
+  summary is handed the severity counts and the untested list; a model asked
+  to count would sometimes get it wrong, and a wrong number in an executive
+  summary discredits the whole report.
+- **An unreadable autonomy mode is treated as OFF, not as the default.** A
+  typo in configuration must not silently grant more autonomy than the
+  operator intended.
+- **Accepting a draft is a higher privilege than requesting one.** Reading a
+  suggestion is cheap; putting it into the record is not, so acceptance is an
+  explicit act by a named person, recorded in the audit trail alongside the
+  model and prompt template that produced the text.
+
+One bug the boundary tests caught: `propose_scan` called the
+target-touching guard unconditionally, so composing a command always failed.
+The guard belongs where something tries to *act*, not where text is
+produced.
+
+Deferred out of Phase 16, with reasons:
+
+- **Correlation and prioritisation are declared capabilities but not
+  implemented.** Both need a `Finding` model with fingerprints and lifecycle,
+  which is Phase 7. Correlating raw scan results would produce suggestions
+  that cannot be acted on, and a "duplicate" suggestion across engines is
+  exactly the cross-engine dedup already deferred in Phase 14.
+- **Cost limits are configurable but not enforced.** `ProviderConfig`
+  carries `max_cost_usd`, and the egress context carries a cost budget, but
+  the OpenAI-compatible provider reports no cost because the wire format does
+  not return one. Enforcing a limit against an estimated cost would be
+  presenting a guess as a measurement, so the field is carried and the
+  enforcement waits for per-model pricing data.
+- **No CLI surface yet** (`aegis assist`, `aegis findings accept-draft`) —
+  the CLI is Phase 10 and the API is the tested surface.
+- **No structured-output use yet.** The provider implements
+  `structured_output` and it is tested, but every current capability drafts
+  prose. It exists for the correlation and prioritisation work above.
+- **No import-linter configuration.** The "nothing in `core` outside
+  `assistant/` imports it" contract is enforced by a test in
+  `tests/security/test_assistant_boundary.py` rather than by the linter; the
+  linter config lands with the rest of the Phase 11 tooling.
+
 ## Later phases
 
 See `docs/BUILD_SPEC.md` §26 for the full phase plan. Remaining: Phases 7–13

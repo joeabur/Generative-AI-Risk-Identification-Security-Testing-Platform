@@ -23,6 +23,17 @@ class Settings(BaseSettings):
     )
     redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
 
+    # --- AI layer (optional end to end) ------------------------------------
+    # Absent means the whole assistant is off and every other part of the
+    # platform behaves identically. `ai_api_key_env_var` is the NAME of an
+    # environment variable; a key is never stored in configuration, the
+    # database, or a log.
+    ai_provider: str | None = Field(default=None, alias="AI_PROVIDER")
+    ai_endpoint: str | None = Field(default=None, alias="AI_ENDPOINT")
+    ai_model: str | None = Field(default=None, alias="AI_MODEL")
+    ai_api_key_env_var: str | None = Field(default=None, alias="AI_API_KEY_ENV_VAR")
+    ai_autonomy_mode: str = Field(default="ASSIST", alias="AI_AUTONOMY_MODE")
+
     jwt_secret: str = Field(default="insecure-local-dev-secret-change-me", alias="JWT_SECRET")
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 12

@@ -194,9 +194,165 @@ Deferred out of Phase 3, with reasons:
 - **No frontend UI for surface review yet** — same reasoning as Phase 2's
   scope UI deferral: both land together against a settled API surface.
 
+## Phase 4 — Assessment engine (this build)
+
+Delivered: `AssessmentRun`/`RunEvent` models with an append-only, sequenced
+event log; a DB-free orchestrator (`app/core/orchestrator/`) that turns a
+list of checks into a terminal run status; a Celery task that executes a run
+in a worker process and persists progress as it goes; cross-process
+cancellation carried over Redis into a latching `KillSwitch`; and the runs
+REST API (create, list, get, events, cancel, and SSE progress). Backend:
+184/184 tests passing, ruff clean, `mypy app` clean, 96% statement coverage
+(scope engine still 100%, runs router 100%).
+
+Two design points worth stating, because both are honesty requirements from
+the spec rather than implementation details:
+
+- **A halt is not automatically a failure.** Budget exhaustion ends a run as
+  `completed` with a `halted_reason`, because the run did everything its
+  budget permitted and the report must say so; an operator cancellation ends
+  it `cancelled`; an authorization that lapses mid-run ends it `expired`.
+  Only a check that raises produces `failed`.
+- **Progress is never faked.** The SSE stream replays persisted `RunEvent`
+  rows and nothing else, so a browser can never show progress ahead of the
+  work, and it closes only once the run has reached a terminal status.
+
+Two bugs found by running a real Celery worker rather than only the test
+suite, both fixed here and both now covered by `tests/test_workers.py`:
+
+- The worker registered no assessment task at all (`include=` was missing
+  from the Celery app), so it started cleanly and discarded every queued run
+  as "unregistered task" while the API kept reporting those runs as queued.
+- Each Celery task runs under its own `asyncio.run`, and an asyncpg
+  connection belongs to the loop that opened it, so the *second* run in any
+  worker process died with "attached to a different loop". The task now
+  disposes the engine before its loop closes.
+
+Deferred out of Phase 4, with reasons:
+
+- **The acceptance criterion "runs end-to-end against the demo lab" is met
+  against a mocked target, not a lab.** The demo lab is Phase 12
+  (`docs/BUILD_SPEC.md` §19, §26) and does not exist yet. The full path —
+  API create → broker → worker → scope-gated requests → persisted events →
+  terminal status — is exercised in `tests/test_runs_api.py` with the
+  network faked at the `httpx` boundary (so the scope engine, budgets and
+  transport are all real), and was additionally driven through a live Celery
+  worker against Postgres and Redis by hand during this build. That is not
+  the same as a lab, and is recorded here as the gap it is.
+- **Only one check ships (`core.reachability`).** It issues one request per
+  enabled endpoint and records the status or the scope rule that refused it.
+  It is deliberately not a security test: the AI and API probe catalogues
+  are Phases 5–6, and inventing probes now would pre-empt that work with
+  untested ones. The check protocol it implements is what those catalogues
+  plug into.
+- **Live discovery (probing well-known spec paths) did not land here** — it
+  was deferred *to* Phase 4 in the Phase 3 notes above. The orchestrator now
+  exists, but the useful form of it is a check in the catalogue rather than
+  a one-off, so it moves to Phase 5 with the API engine.
+- **Runs are not resumable and there is no retry policy.** A worker killed
+  mid-run leaves the run in `running`; nothing currently reaps it. A
+  heartbeat plus a reaper is an operational concern that belongs with the
+  Phase 11 hardening pass, and inventing a half-reaper now would make stale
+  runs *look* handled.
+- **`requests_per_second` is still not enforced** (carried from Phase 2).
+  Concurrency, request count, tokens, cost and wall-clock all are; pacing
+  needs a limiter shared across worker processes, which arrives with the
+  rate-limiting work in Phase 11.
+- **No frontend UI for runs yet** — the runs API and its SSE stream are
+  complete and exercised, but the dashboard surface lands with the scope and
+  surface UIs, against a settled API.
+- **Cancellation fails open if Redis is unreachable.** `is_cancellation_requested`
+  returns `False` on a `RedisError` rather than stopping every run, which is
+  the documented trade-off in `app/workers/cancellation.py`: a genuine
+  cancellation also writes a terminal status to Postgres, and the run stays
+  bounded by its budgets, authorization window and wall clock regardless.
+
+## Phase 5 — API security engine (this build)
+
+Delivered: a probe contract (`ScanResult` per §11.1, a `Probe` protocol and
+an explicit registry), sixteen API probes covering OWASP API2 (authentication,
+transport, key material in URLs), API1/API5 (BOLA and function-level
+authorization via authorized synthetic accounts), API3 (mass assignment),
+API4 (rate-limit advertisement, pagination limits), API8/API9
+(security headers, CORS, verbose errors, debug endpoints, input validation)
+and GraphQL (introspection, depth/aliasing cost, error verbosity);
+credential *references* with worker-side resolution; a `ScanResultRecord`
+table; probe execution wired into the orchestrator; and `GET
+/runs/{id}/results`. Backend: 227/227 tests passing, ruff clean, `mypy app`
+clean, 95% statement coverage (scope engine still 100%).
+
+Four decisions worth stating, because each is a deliberate limit rather than
+an oversight:
+
+- **Mass assignment is analysis-only, in every mode.** §10 requires that
+  under safe mode, and safe mode is what runs ship with. Confirming mass
+  assignment means writing `is_admin: true` to a real record; a tool that
+  does that to prove a point has caused the incident it was hired to find.
+  The specification already says whether the field is bindable, so the probe
+  reports it at `DESIGN_REVIEW` confidence, clearly labelled, and never as a
+  confirmed exploit. With safe mode off it says explicitly that live
+  confirmation is not implemented rather than quietly behaving the same way.
+- **Authorization probes need a control, and say so when they cannot get
+  one.** A BOLA test asks the owning account for its own object first. Without
+  that, a 404 to the second account would be reported as "correctly denied"
+  when the object may simply not exist, and an endpoint that returns 200 to
+  everyone would be reported as BOLA. Where no synthetic accounts are
+  configured, the probe emits an explicit "not tested" result — silence
+  would read as a pass on the single highest-value check in the engine.
+- **A credential is never stored.** The database holds the *name* of an
+  environment variable, validated to look like one so a token cannot be
+  pasted in by mistake; the worker resolves it at run time into a
+  `CredentialSet` that exposes it only as a request header. A test asserts
+  no credential value appears in any field a report is built from.
+- **A crashed probe is a visible gap, not a silent pass.** A probe that
+  raises produces an `AEGIS-API-099` informational result and the run
+  continues. Without it, a probe failing on every endpoint would look
+  identical to a probe that found nothing — the most dangerous false
+  negative a scanner can have.
+
+Deferred out of Phase 5, with reasons:
+
+- **The acceptance criterion is met against fixture apps, not the demo
+  lab.** §26 asks for "every seeded API flaw in the demo lab; zero findings
+  against a hardened control app". The lab is Phase 12 and does not exist, so
+  `tests/lab/` contains two in-process applications — one carrying 17 seeded
+  flaws, one built correctly — served through the real `GatedTransport` and
+  the real scope engine with only the socket replaced. The engine finds all
+  17 and reports nothing against the control, and removing a single
+  hardening measure from the control app was checked to make that test fail.
+  That is a genuine test of the engine; it is not a deployable, isolated lab,
+  and this entry is the record of that difference.
+- **SSRF (API7) is not implemented.** §10 requires a scope-controlled local
+  collaborator in the lab, or a non-resolving canary domain against real
+  targets, and is explicit that a target must never be pointed at a third
+  party. The collaborator is lab infrastructure that arrives in Phase 12;
+  shipping an SSRF probe without it would mean either no way to observe the
+  callback, or pointing someone's API at a host we do not control. Neither is
+  acceptable, so the probe waits for the lab.
+- **JWT-specific authentication tests are not implemented** — `alg:none`,
+  unsigned tokens, absent expiry. These need a token to manipulate, which
+  means the synthetic-account credential, and the useful version of the check
+  reasons about the token's structure. It belongs with the credential
+  handling work rather than bolted onto the unauthenticated-access probe.
+- **Spec/production drift and stale API versions (API9) are not
+  implemented** — the parser records the declared surface and the probes
+  exercise it, but nothing yet compares what the spec declares against what
+  the server actually exposes. That needs live discovery (also deferred, see
+  Phase 3/4 entries) to be worth anything.
+- **No trials, ASR or confidence intervals yet.** §7's machinery applies to
+  probabilistic AI probes; every API probe here is deterministic, so a single
+  observation is the whole result and an ASR would be theatre. The machinery
+  lands with the AI engine in Phase 6.
+- **Results are not yet findings.** `ScanResultRecord` stores the §11.1 wire
+  shape. Fingerprinting, risk scoring, severity rationale, mapping versions
+  and lifecycle are the findings service in Phase 7, and the API deliberately
+  returns no risk score rather than inventing one at the boundary.
+- **No frontend UI for results yet** — same reasoning as the scope, surface
+  and runs UIs: they land together against a settled API.
+
 ## Later phases
 
-See `docs/BUILD_SPEC.md` §26 for the full phase plan (Phases 4–13: assessment
-engine, API/AI security engines, findings & risk, evidence & reporting,
+See `docs/BUILD_SPEC.md` §26 for the full phase plan (Phases 6–13: AI
+security engine, findings & risk, evidence & reporting,
 remediation & retest, CLI/CI gate, plugins, demo lab & hardening,
 documentation & release).

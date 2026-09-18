@@ -49,6 +49,11 @@ class SurfaceEndpoint(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     request_body_content_types: Mapped[list[str]] = mapped_column(
         JSON, nullable=False, default=list
     )
+    # Top-level request-body properties as discovered from the spec. Stored
+    # so a worker can rebuild the operation for a probe without re-parsing
+    # (and re-trusting) the uploaded document on every run.
+    body_fields: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    body_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     security_schemes: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     requires_auth: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

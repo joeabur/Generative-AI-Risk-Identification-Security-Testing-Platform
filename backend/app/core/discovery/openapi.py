@@ -31,6 +31,11 @@ import yaml
 MAX_DOCUMENT_BYTES = 5 * 1024 * 1024
 MAX_OPERATIONS = 2000
 MAX_REF_DEPTH = 8
+# A body schema is walked one property level deep and no further. Probes need
+# to know *which* fields an operation accepts and roughly what type they are,
+# not the whole schema graph, and a bound here is what stops a hostile
+# document from expanding into an exponential walk.
+MAX_BODY_PROPERTIES = 200
 
 _HTTP_METHODS = ("get", "put", "post", "delete", "options", "head", "patch", "trace")
 
@@ -48,6 +53,25 @@ class DiscoveredParameter:
 
 
 @dataclass(frozen=True)
+class DiscoveredBodyField:
+    """One top-level property of a request body schema.
+
+    `required` and `read_only` are what the mass-assignment probe reasons
+    about: a field the spec marks `readOnly` but the API still accepts is
+    exactly the API3 weakness, and it can be spotted from the spec alone.
+    """
+
+    name: str
+    schema_type: str | None = None
+    required: bool = False
+    read_only: bool = False
+    enum_values: tuple[str, ...] = ()
+    minimum: float | None = None
+    maximum: float | None = None
+    max_length: int | None = None
+
+
+@dataclass(frozen=True)
 class DiscoveredOperation:
     method: str
     path: str
@@ -55,6 +79,8 @@ class DiscoveredOperation:
     summary: str | None = None
     parameters: tuple[DiscoveredParameter, ...] = ()
     request_body_content_types: tuple[str, ...] = ()
+    body_fields: tuple[DiscoveredBodyField, ...] = ()
+    body_required: bool = False
     security_schemes: tuple[str, ...] = ()
     requires_auth: bool = False
 
@@ -177,6 +203,8 @@ def parse_surface(document: dict[str, Any]) -> DiscoveredSurface:
                     request_body_content_types=_request_body_content_types(
                         operation.get("requestBody"), document
                     ),
+                    body_fields=_parse_body_fields(operation.get("requestBody"), document),
+                    body_required=_body_required(operation.get("requestBody"), document),
                     security_schemes=tuple(security_names),
                     requires_auth=requires_auth,
                 )
@@ -242,6 +270,84 @@ def _request_body_content_types(raw: Any, document: dict[str, Any]) -> tuple[str
     if not isinstance(content, dict):
         return ()
     return tuple(str(media_type) for media_type in content)
+
+
+def _json_body_schema(raw: Any, document: dict[str, Any]) -> dict[str, Any] | None:
+    """The JSON request-body schema for an operation, if it declares one."""
+    if not isinstance(raw, dict):
+        return None
+    resolved = _resolve_refs(raw, document)
+    content = resolved.get("content")
+    if not isinstance(content, dict):
+        return None
+    for media_type, media in content.items():
+        if not isinstance(media_type, str) or "json" not in media_type.lower():
+            continue
+        if not isinstance(media, dict):
+            continue
+        schema = media.get("schema")
+        if isinstance(schema, dict):
+            return _resolve_refs(schema, document)
+    return None
+
+
+def _body_required(raw: Any, document: dict[str, Any]) -> bool:
+    if not isinstance(raw, dict):
+        return False
+    return bool(_resolve_refs(raw, document).get("required") is True)
+
+
+def _parse_body_fields(raw: Any, document: dict[str, Any]) -> tuple[DiscoveredBodyField, ...]:
+    schema = _json_body_schema(raw, document)
+    if schema is None:
+        return ()
+
+    # An array body is described by its item schema; anything else without
+    # properties has no fields worth reporting.
+    if schema.get("type") == "array":
+        items = schema.get("items")
+        schema = _resolve_refs(items, document) if isinstance(items, dict) else {}
+
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return ()
+
+    required_names = (
+        {name for name in schema.get("required", []) if isinstance(name, str)}
+        if isinstance(schema.get("required"), list)
+        else set()
+    )
+
+    fields: list[DiscoveredBodyField] = []
+    for name, raw_property in properties.items():
+        if not isinstance(name, str):
+            continue
+        if len(fields) >= MAX_BODY_PROPERTIES:
+            raise OpenApiParseError(
+                f"request body declares more than {MAX_BODY_PROPERTIES} properties"
+            )
+        prop = _resolve_refs(raw_property, document) if isinstance(raw_property, dict) else {}
+        fields.append(
+            DiscoveredBodyField(
+                name=name,
+                schema_type=_optional_str(prop.get("type")),
+                required=name in required_names,
+                read_only=prop.get("readOnly") is True,
+                enum_values=tuple(str(value) for value in prop.get("enum", []))
+                if isinstance(prop.get("enum"), list)
+                else (),
+                minimum=_optional_number(prop.get("minimum")),
+                maximum=_optional_number(prop.get("maximum")),
+                max_length=int(prop["maxLength"])
+                if isinstance(prop.get("maxLength"), int)
+                else None,
+            )
+        )
+    return tuple(fields)
+
+
+def _optional_number(value: Any) -> float | None:
+    return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
 
 
 def _resolve_refs(

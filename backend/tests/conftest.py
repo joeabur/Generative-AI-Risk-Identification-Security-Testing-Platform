@@ -26,6 +26,12 @@ test_engine = create_async_engine(settings.database_url)
 TestSessionLocal = async_sessionmaker(bind=test_engine, expire_on_commit=False, class_=AsyncSession)
 
 _TABLES = [
+    "scan_results",
+    "run_events",
+    "assessment_runs",
+    "api_specs",
+    "synthetic_accounts",
+    "surface_endpoints",
     "rules_of_engagement",
     "authorizations",
     "targets",

@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api.v1.routers import (
     assistant,
     auth,
+    findings,
     health,
     organizations,
     runs,
@@ -17,4 +18,5 @@ api_router.include_router(organizations.router)
 api_router.include_router(targets.router)
 api_router.include_router(surface.router)
 api_router.include_router(runs.router)
+api_router.include_router(findings.router)
 api_router.include_router(assistant.router)

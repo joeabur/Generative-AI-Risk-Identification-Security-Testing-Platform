@@ -8,6 +8,7 @@ from app.models.assessment_run import (
 )
 from app.models.audit import AuditEvent
 from app.models.authorization import Authorization
+from app.models.finding import Finding, FindingStatus
 from app.models.organization import Membership, Organization, Role
 from app.models.rules_of_engagement import RulesOfEngagementRecord
 from app.models.scan_result import ScanResultRecord
@@ -20,6 +21,8 @@ __all__ = [
     "AiDraft",
     "ApiSpec",
     "DraftField",
+    "Finding",
+    "FindingStatus",
     "AssessmentRun",
     "AuditEvent",
     "Authorization",

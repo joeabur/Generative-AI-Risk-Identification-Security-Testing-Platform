@@ -622,6 +622,79 @@ Deferred out of Phase 16, with reasons:
   `tests/security/test_assistant_boundary.py` rather than by the linter; the
   linter config lands with the rest of the Phase 11 tooling.
 
+## Phase 7 — findings & risk (this build)
+
+Delivered: the Aegis risk model with published ordinal tables, fingerprinting
+that survives across runs, normalization from `ScanResult` into a stored
+`Finding`, promotion wired into the run pipeline, and the findings API with
+lifecycle transitions.
+
+**Acceptance met.** §26 names two criteria and both are tested directly:
+the fingerprint-stability test passes, and every finding carries a
+`severity_rationale` that states the score it belongs to.
+
+Decisions worth stating:
+
+- **The score and its rationale are generated in the same call.** There is
+  no path that produces one without the other, so a finding cannot carry a
+  number nobody can account for. A rationale written beside a computed score
+  drifts the first time either changes, and a reader who notices stops
+  trusting both.
+- **`docs/risk-model.md` is generated from the scorer's own constants.** A
+  table maintained by hand is wrong the first time a weight changes, and §12
+  requires the numbers to be published. A test asserts the document contains
+  the values the scorer actually applies.
+- **Likelihood uses the measured interval's lower bound, not the rate.** A
+  3/5 success rate has a lower bound near 0.23; scoring it as 0.6 would treat
+  sampling noise as an established fact. A probabilistic finding therefore
+  scores below the identical deterministic one — which is the entire point of
+  the Phase 6 measurement machinery reaching the risk number.
+- **The fingerprint excludes response text**, per §11, and normalizes object
+  ids, timestamps, canaries and short hex ids out of the surface and
+  signature. Without that the same unfixed weakness becomes a new finding
+  every run, the history is destroyed, and remediation has nothing stable to
+  attach to. Both directions are tested: volatile detail collapses, and two
+  genuinely different weaknesses stay distinct.
+- **CVSS and AIVSS are left empty rather than manufactured.** §12 forbids a
+  CVSS vector for "the model followed an injected instruction", which CVSS
+  cannot express. An empty field is honest; a fabricated vector a reader will
+  paste into a calculator is not.
+- **A triage decision survives a re-run, with one exception.** Re-running a
+  scan must not revert a human's judgement — except that something marked
+  remediated which a later run still finds is reopened as confirmed, because
+  a stale "remediated" on a live weakness is the most dangerous record in the
+  system.
+- **Transitions are restricted.** A finding cannot jump from `new` to
+  `closed`; it has to pass through a state that records why, which is what
+  makes a closed finding auditable months later. `remediated` leads only to
+  `retest_required`, because a remediation is a claim until something checks
+  it.
+- **Exposure is read conservatively.** When the target's reachability is
+  unclear the higher exposure is assumed: under-stating reach produces a
+  comfortable number and an unpleasant surprise.
+
+One bug the fingerprint-stability test caught: the hex-normalizing rule
+required sixteen characters, so eight-character request and correlation ids
+survived into the signature and would have produced a new finding every run.
+
+Deferred out of Phase 7, with reasons:
+
+- **`mapping_versions` is empty.** §3.4 requires each mapping to cite a
+  pinned framework version with a retrieval date, and that ingestion has not
+  been done. An unverified version string implies a check nobody performed,
+  so the field stays empty and a test asserts it.
+- **No evidence_ref yet.** The column exists; sealing evidence into a
+  content-addressed bundle is Phase 8.
+- **No cross-engine correlation.** Still the honest gap from Phase 14 and
+  Phase 16: a SAST finding and a DAST finding describing the same defect
+  remain two findings. The fingerprint now gives correlation something stable
+  to work from, which is the prerequisite it was missing.
+- **Exposure and impact are derived, not declared.** An operator cannot yet
+  override the exposure reading for a target that is, say, behind a VPN the
+  platform cannot see. The inputs are recorded on every finding so the
+  derivation is visible and arguable; making it editable belongs with the
+  remediation workflow in Phase 9.
+
 ## Later phases
 
 See `docs/BUILD_SPEC.md` §26 for the full phase plan. Remaining: Phases 7–13

@@ -27,6 +27,7 @@ from app.core.appsec.checkout import (
 )
 from app.core.appsec.registry import appsec_engines
 from app.core.appsec.workspace import CodeScopeError
+from app.core.findings.service import promote_run_results
 from app.core.orchestrator.ai_check import AiSecurityCheck
 from app.core.orchestrator.checks import Check, Endpoint, ReachabilityCheck
 from app.core.orchestrator.code_check import CodeScanCheck
@@ -75,6 +76,10 @@ async def _load_run(db: AsyncSession, run_id: uuid.UUID) -> AssessmentRun | None
         .options(
             selectinload(AssessmentRun.target).selectinload(Target.authorization),
             selectinload(AssessmentRun.target).selectinload(Target.rules_of_engagement),
+            # Loaded eagerly because the findings service reads it to judge
+            # exposure, and a lazy load in the async worker raises rather
+            # than quietly fetching.
+            selectinload(AssessmentRun.target).selectinload(Target.surface_endpoints),
         )
     )
     return result.scalar_one_or_none()
@@ -124,6 +129,8 @@ async def _persist_scan_results(
                 frameworks=list(result.frameworks),
                 reproduction=list(result.reproduction),
                 fingerprint=result.fingerprint,
+                measurement=result.measurement,
+                stability=result.stability,
             )
         )
     await db.commit()
@@ -255,6 +262,13 @@ async def execute_assessment_run(
         if code_check is not None:
             all_results.extend(code_check.scan_results)
         await _persist_scan_results(db, run.id, run.organization_id, all_results)
+
+        # Promote this run's results into persistent findings. Done after
+        # the results are stored so a promotion can be re-run and corrected
+        # later without re-scanning the target.
+        await promote_run_results(
+            db, organization_id=run.organization_id, run_id=run.id, target=target
+        )
 
         run.status = RunStatus(outcome.status.value)
         run.findings_reported = sum(

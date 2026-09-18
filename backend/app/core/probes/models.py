@@ -11,6 +11,7 @@ to construct — or can never fake — a risk score.
 
 from dataclasses import dataclass, field
 from enum import StrEnum
+from typing import Any
 
 
 class Category(StrEnum):
@@ -67,3 +68,10 @@ class ScanResult:
     # dynamic probe's identity depends on the surface it tested, so it is
     # left to the findings service in Phase 7 rather than guessed here.
     fingerprint: str | None = None
+    # The measurement behind a probabilistic result, structurally rather
+    # than as prose. The findings service needs the interval's lower bound
+    # to score likelihood, and re-parsing it out of an evidence string would
+    # be both fragile and a second place for the number to be wrong.
+    measurement: dict[str, Any] | None = None
+    # Stability per §7.4: deterministic, probabilistic, or single_shot.
+    stability: str | None = None

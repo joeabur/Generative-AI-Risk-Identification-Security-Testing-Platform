@@ -84,4 +84,10 @@ def scan_result(
         probe_version=meta.version,
         frameworks=meta.mappings.as_frameworks(),
         reproduction=reproduction,
+        # Carried structurally as well as in the evidence prose: the risk
+        # model scores likelihood from the interval's lower bound, and
+        # re-parsing that out of a sentence would be a second place for the
+        # number to be wrong.
+        measurement=outcome.measurement.as_dict(),
+        stability=outcome.measurement.stability.value,
     )

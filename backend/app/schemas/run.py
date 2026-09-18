@@ -76,3 +76,5 @@ class ScanResultRead(BaseModel):
     frameworks: list[str]
     reproduction: list[str]
     fingerprint: str | None
+    measurement: dict[str, Any] | None
+    stability: str | None

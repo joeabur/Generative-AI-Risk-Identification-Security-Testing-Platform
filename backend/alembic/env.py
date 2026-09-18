@@ -8,7 +8,17 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 from app.core.config import get_settings
 from app.db.base import Base
-from app.models import AuditEvent, Membership, Organization, User  # noqa: F401 - registers metadata
+from app.models import (  # noqa: F401 - registers metadata
+    ApiSpec,
+    AuditEvent,
+    Authorization,
+    Membership,
+    Organization,
+    RulesOfEngagementRecord,
+    SurfaceEndpoint,
+    Target,
+    User,
+)
 
 config = context.config
 if config.config_file_name is not None:

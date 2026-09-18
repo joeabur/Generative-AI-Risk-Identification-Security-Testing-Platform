@@ -13,9 +13,11 @@ os.environ.setdefault(
 os.environ.setdefault("ENVIRONMENT", "ci")
 os.environ.setdefault("JWT_SECRET", "test-only-secret-do-not-use-elsewhere")
 
+from app.api.v1.routers.targets import get_dns_resolver  # noqa: E402
 from app.core.config import get_settings  # noqa: E402
 from app.db.session import get_db  # noqa: E402
 from app.main import create_app  # noqa: E402
+from tests.security.conftest import FakeDnsResolver  # noqa: E402
 
 get_settings.cache_clear()
 settings = get_settings()
@@ -23,7 +25,15 @@ settings = get_settings()
 test_engine = create_async_engine(settings.database_url)
 TestSessionLocal = async_sessionmaker(bind=test_engine, expire_on_commit=False, class_=AsyncSession)
 
-_TABLES = ["memberships", "audit_logs", "users", "organizations"]
+_TABLES = [
+    "rules_of_engagement",
+    "authorizations",
+    "targets",
+    "memberships",
+    "audit_logs",
+    "users",
+    "organizations",
+]
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -48,6 +58,13 @@ async def client() -> AsyncGenerator[AsyncClient, None]:
             yield session
 
     app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_dns_resolver] = lambda: FakeDnsResolver(
+        {
+            "ai.example.test": ["203.0.113.5"],
+            "sub.ai.example.test": ["203.0.113.6"],
+            "evil.test": ["203.0.113.99"],
+        }
+    )
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as ac:

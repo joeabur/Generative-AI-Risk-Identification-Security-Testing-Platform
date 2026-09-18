@@ -33,3 +33,19 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
     session_factory = get_session_factory()
     async with session_factory() as session:
         yield session
+
+
+async def dispose_engine() -> None:
+    """Drop the pooled connections and the engine that owns them.
+
+    A Celery worker runs each task under its own `asyncio.run()`, and an
+    asyncpg connection is bound to the loop that opened it. Without this, the
+    *second* task in a worker process would pick a pooled connection from the
+    first task's dead loop and fail with "attached to a different loop", so
+    the worker must dispose the engine at the end of every task.
+    """
+    global _engine, _session_factory
+    if _engine is not None:
+        await _engine.dispose()
+    _engine = None
+    _session_factory = None

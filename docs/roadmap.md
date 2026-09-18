@@ -194,9 +194,82 @@ Deferred out of Phase 3, with reasons:
 - **No frontend UI for surface review yet** — same reasoning as Phase 2's
   scope UI deferral: both land together against a settled API surface.
 
+## Phase 4 — Assessment engine (this build)
+
+Delivered: `AssessmentRun`/`RunEvent` models with an append-only, sequenced
+event log; a DB-free orchestrator (`app/core/orchestrator/`) that turns a
+list of checks into a terminal run status; a Celery task that executes a run
+in a worker process and persists progress as it goes; cross-process
+cancellation carried over Redis into a latching `KillSwitch`; and the runs
+REST API (create, list, get, events, cancel, and SSE progress). Backend:
+184/184 tests passing, ruff clean, `mypy app` clean, 96% statement coverage
+(scope engine still 100%, runs router 100%).
+
+Two design points worth stating, because both are honesty requirements from
+the spec rather than implementation details:
+
+- **A halt is not automatically a failure.** Budget exhaustion ends a run as
+  `completed` with a `halted_reason`, because the run did everything its
+  budget permitted and the report must say so; an operator cancellation ends
+  it `cancelled`; an authorization that lapses mid-run ends it `expired`.
+  Only a check that raises produces `failed`.
+- **Progress is never faked.** The SSE stream replays persisted `RunEvent`
+  rows and nothing else, so a browser can never show progress ahead of the
+  work, and it closes only once the run has reached a terminal status.
+
+Two bugs found by running a real Celery worker rather than only the test
+suite, both fixed here and both now covered by `tests/test_workers.py`:
+
+- The worker registered no assessment task at all (`include=` was missing
+  from the Celery app), so it started cleanly and discarded every queued run
+  as "unregistered task" while the API kept reporting those runs as queued.
+- Each Celery task runs under its own `asyncio.run`, and an asyncpg
+  connection belongs to the loop that opened it, so the *second* run in any
+  worker process died with "attached to a different loop". The task now
+  disposes the engine before its loop closes.
+
+Deferred out of Phase 4, with reasons:
+
+- **The acceptance criterion "runs end-to-end against the demo lab" is met
+  against a mocked target, not a lab.** The demo lab is Phase 12
+  (`docs/BUILD_SPEC.md` §19, §26) and does not exist yet. The full path —
+  API create → broker → worker → scope-gated requests → persisted events →
+  terminal status — is exercised in `tests/test_runs_api.py` with the
+  network faked at the `httpx` boundary (so the scope engine, budgets and
+  transport are all real), and was additionally driven through a live Celery
+  worker against Postgres and Redis by hand during this build. That is not
+  the same as a lab, and is recorded here as the gap it is.
+- **Only one check ships (`core.reachability`).** It issues one request per
+  enabled endpoint and records the status or the scope rule that refused it.
+  It is deliberately not a security test: the AI and API probe catalogues
+  are Phases 5–6, and inventing probes now would pre-empt that work with
+  untested ones. The check protocol it implements is what those catalogues
+  plug into.
+- **Live discovery (probing well-known spec paths) did not land here** — it
+  was deferred *to* Phase 4 in the Phase 3 notes above. The orchestrator now
+  exists, but the useful form of it is a check in the catalogue rather than
+  a one-off, so it moves to Phase 5 with the API engine.
+- **Runs are not resumable and there is no retry policy.** A worker killed
+  mid-run leaves the run in `running`; nothing currently reaps it. A
+  heartbeat plus a reaper is an operational concern that belongs with the
+  Phase 11 hardening pass, and inventing a half-reaper now would make stale
+  runs *look* handled.
+- **`requests_per_second` is still not enforced** (carried from Phase 2).
+  Concurrency, request count, tokens, cost and wall-clock all are; pacing
+  needs a limiter shared across worker processes, which arrives with the
+  rate-limiting work in Phase 11.
+- **No frontend UI for runs yet** — the runs API and its SSE stream are
+  complete and exercised, but the dashboard surface lands with the scope and
+  surface UIs, against a settled API.
+- **Cancellation fails open if Redis is unreachable.** `is_cancellation_requested`
+  returns `False` on a `RedisError` rather than stopping every run, which is
+  the documented trade-off in `app/workers/cancellation.py`: a genuine
+  cancellation also writes a terminal status to Postgres, and the run stays
+  bounded by its budgets, authorization window and wall clock regardless.
+
 ## Later phases
 
-See `docs/BUILD_SPEC.md` §26 for the full phase plan (Phases 4–13: assessment
-engine, API/AI security engines, findings & risk, evidence & reporting,
+See `docs/BUILD_SPEC.md` §26 for the full phase plan (Phases 5–13: API/AI
+security engines, findings & risk, evidence & reporting,
 remediation & retest, CLI/CI gate, plugins, demo lab & hardening,
 documentation & release).

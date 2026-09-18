@@ -8,6 +8,10 @@ celery_app = Celery(
     "aegis_ai_security",
     broker=settings.redis_url,
     backend=settings.redis_url,
+    # Without this the worker starts happily but never registers
+    # `aegis.run_assessment`, and every queued run is discarded as an
+    # "unregistered task" while the API reports it as queued.
+    include=["app.workers.tasks"],
 )
 
 celery_app.conf.update(
@@ -22,10 +26,6 @@ celery_app.conf.update(
 
 @celery_app.task(name="aegis.health_check")
 def health_check() -> dict[str, str]:
-    """Placeholder task proving the worker/broker wiring works end to end.
-
-    The real scan orchestration tasks (core/orchestrator/) land in Phase 4
-    (docs/BUILD_SPEC.md §26) and must call into core/scope/ for every
-    outbound request they make — this task deliberately makes none.
-    """
+    """Liveness probe for the worker/broker wiring. Makes no outbound
+    request of its own; assessment work lives in `app.workers.tasks`."""
     return {"status": "ok"}

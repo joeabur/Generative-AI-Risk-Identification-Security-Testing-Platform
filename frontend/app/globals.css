@@ -1,0 +1,71 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 210 20% 98%;
+  --foreground: 222 47% 11%;
+  --border: 214 32% 87%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+  --primary: 217 91% 40%;
+  --primary-foreground: 210 40% 98%;
+  --muted: 210 20% 94%;
+  --muted-foreground: 215 16% 40%;
+  --destructive: 0 72% 42%;
+  --destructive-foreground: 210 40% 98%;
+
+  --severity-critical: 0 72% 42%;
+  --severity-high: 24 88% 45%;
+  --severity-medium: 42 87% 42%;
+  --severity-low: 142 60% 32%;
+  --severity-info: 217 91% 40%;
+}
+
+:root[data-theme="dark"],
+:root:not([data-theme="light"]) {
+  @media (prefers-color-scheme: dark) {
+    --background: 222 47% 7%;
+    --foreground: 210 40% 96%;
+    --border: 217 33% 20%;
+    --card: 222 44% 10%;
+    --card-foreground: 210 40% 96%;
+    --primary: 217 91% 60%;
+    --primary-foreground: 222 47% 7%;
+    --muted: 217 33% 15%;
+    --muted-foreground: 215 20% 65%;
+    --destructive: 0 63% 55%;
+    --destructive-foreground: 210 40% 96%;
+
+    --severity-critical: 0 84% 63%;
+    --severity-high: 24 90% 58%;
+    --severity-medium: 42 90% 55%;
+    --severity-low: 142 60% 48%;
+    --severity-info: 217 91% 65%;
+  }
+}
+
+:root[data-theme="dark"] {
+  --background: 222 47% 7%;
+  --foreground: 210 40% 96%;
+  --border: 217 33% 20%;
+  --card: 222 44% 10%;
+  --card-foreground: 210 40% 96%;
+  --primary: 217 91% 60%;
+  --primary-foreground: 222 47% 7%;
+  --muted: 217 33% 15%;
+  --muted-foreground: 215 20% 65%;
+  --destructive: 0 63% 55%;
+  --destructive-foreground: 210 40% 96%;
+
+  --severity-critical: 0 84% 63%;
+  --severity-high: 24 90% 58%;
+  --severity-medium: 42 90% 55%;
+  --severity-low: 142 60% 48%;
+  --severity-info: 217 91% 65%;
+}
+
+body {
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+}

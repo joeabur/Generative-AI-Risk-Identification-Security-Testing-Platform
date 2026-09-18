@@ -52,11 +52,15 @@ def _target_read(target: Target) -> TargetRead:
     )
 
 
-async def _load_target(organization_id: uuid.UUID, target_id: uuid.UUID, db: DbSession) -> Target:
+async def load_target(organization_id: uuid.UUID, target_id: uuid.UUID, db: DbSession) -> Target:
     result = await db.execute(
         select(Target)
         .where(Target.id == target_id, Target.organization_id == organization_id)
-        .options(selectinload(Target.authorization), selectinload(Target.rules_of_engagement))
+        .options(
+            selectinload(Target.authorization),
+            selectinload(Target.rules_of_engagement),
+            selectinload(Target.api_spec),
+        )
     )
     target = result.scalar_one_or_none()
     if target is None:
@@ -128,7 +132,7 @@ async def get_target(
     db: DbSession,
     membership: Membership = Depends(require_membership(Role.VIEWER)),  # noqa: B008
 ) -> TargetRead:
-    target = await _load_target(organization_id, target_id, db)
+    target = await load_target(organization_id, target_id, db)
     return _target_read(target)
 
 
@@ -148,7 +152,7 @@ async def set_rules_of_engagement(
     validation -> RUN REFUSED") before anything is persisted, so a bad
     document is rejected here rather than only discovered at run time.
     """
-    target = await _load_target(organization_id, target_id, db)
+    target = await load_target(organization_id, target_id, db)
 
     try:
         roe = resolve_rules_of_engagement(payload)
@@ -209,7 +213,7 @@ async def get_rules_of_engagement(
     db: DbSession,
     membership: Membership = Depends(require_membership(Role.VIEWER)),  # noqa: B008
 ) -> RulesOfEngagementRead:
-    target = await _load_target(organization_id, target_id, db)
+    target = await load_target(organization_id, target_id, db)
     if target.rules_of_engagement is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="No Rules of Engagement configured")
     return RulesOfEngagementRead.model_validate(target.rules_of_engagement)
@@ -232,7 +236,7 @@ async def grant_authorization(
     `require_membership(Role.ADMIN)` enforces exactly that. Granting a new
     authorization for a target replaces any existing one (§models/authorization.py).
     """
-    target = await _load_target(organization_id, target_id, db)
+    target = await load_target(organization_id, target_id, db)
 
     if target.authorization is None:
         record = Authorization(target_id=target.id)
@@ -273,7 +277,7 @@ async def get_authorization(
     db: DbSession,
     membership: Membership = Depends(require_membership(Role.VIEWER)),  # noqa: B008
 ) -> AuthorizationRead:
-    target = await _load_target(organization_id, target_id, db)
+    target = await load_target(organization_id, target_id, db)
     if target.authorization is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="No authorization on file")
     return AuthorizationRead.model_validate(target.authorization)
@@ -292,7 +296,7 @@ async def explain_scope(
     without sending anything or consuming any budget
     (docs/BUILD_SPEC.md §6.2, §18 `aegis-ai scope explain`).
     """
-    target = await _load_target(organization_id, target_id, db)
+    target = await load_target(organization_id, target_id, db)
 
     try:
         ctx = build_run_context(target)

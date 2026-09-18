@@ -9,8 +9,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
+    from app.models.api_spec import ApiSpec
     from app.models.authorization import Authorization
     from app.models.rules_of_engagement import RulesOfEngagementRecord
+    from app.models.surface_endpoint import SurfaceEndpoint
 
 
 class TargetEnvironment(enum.StrEnum):
@@ -62,4 +64,10 @@ class Target(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     rules_of_engagement: Mapped["RulesOfEngagementRecord | None"] = relationship(
         back_populates="target", uselist=False, cascade="all, delete-orphan"
+    )
+    api_spec: Mapped["ApiSpec | None"] = relationship(
+        back_populates="target", uselist=False, cascade="all, delete-orphan"
+    )
+    surface_endpoints: Mapped[list["SurfaceEndpoint"]] = relationship(
+        back_populates="target", cascade="all, delete-orphan"
     )

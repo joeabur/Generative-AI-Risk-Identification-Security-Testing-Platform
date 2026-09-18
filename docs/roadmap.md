@@ -135,9 +135,68 @@ Deferred out of Phase 2, with reasons:
   attack-surface discovery in Phase 3 (`docs/BUILD_SPEC.md` §26), which is
   where it's actually implemented.
 
+## Phase 3 — Adapters & discovery (this build)
+
+Delivered: the adapter layer (`app/core/targets/`) and OpenAPI attack-surface
+discovery (`app/core/discovery/`).
+
+- **Adapter protocols**, split into `ConversationalAdapter` (`send(turn)`)
+  and `RestSurfaceAdapter` (`operations()` / `send_operation(...)`) over a
+  shared `TargetAdapter` base. The spec (§8) defines a single chat-shaped
+  protocol; that shape does not fit `http_openapi`, where the unit of work
+  is "call operation X with parameters". Splitting it beat inventing a fake
+  `Turn` for every REST call — recorded here as a deliberate deviation.
+- **`chat_http`** (JSON request template + JSONPath extraction),
+  **`openai_compatible`** (`/v1/chat/completions` and `/v1/responses`
+  shapes), **`http_openapi`** (spec-driven REST). All send exclusively
+  through `GatedTransport`, so the Phase 2 static check still proves no
+  ungated HTTP path exists.
+- **Provider-reported token usage feeds `BudgetTracker.reconcile()`**, so
+  §6.2's "use reported usage when available, estimate otherwise" is real
+  rather than aspirational — the estimate is replaced by the truth before
+  the next budget check.
+- **OpenAPI 3.x parser** treating uploads as hostile input: `yaml.safe_load`
+  only, remote `$ref`s refused rather than fetched (an SSRF primitive aimed
+  at the scanner host), cycle-safe and depth-capped local ref resolution,
+  document-size and operation-count caps, malformed path entries skipped
+  rather than aborting the whole import.
+- **Surface API**: spec upload (extension/size/filename validation, stored
+  in the database rather than the filesystem so path traversal is
+  structurally impossible), endpoint listing, and per-endpoint enable/
+  disable that survives a spec re-upload.
+
+155/155 backend tests passing, ruff clean, mypy --strict clean, 94% overall
+coverage (91% across the new `core/targets` + `core/discovery` modules;
+`core/scope` still at 99%).
+
+Deferred out of Phase 3, with reasons:
+
+- **Real tokenizer** — `app/core/targets/tokens.py` is an explicit
+  ~4-chars-per-token heuristic, not a tokenizer, and says so. It is only
+  used for the pre-flight estimate that reported usage then replaces.
+  Adding `tiktoken` (or equivalent) is a dependency decision worth making
+  deliberately alongside the AI engine in Phase 6, not smuggled in here.
+- **`graphql`, `mcp`, `websocket`, `cli_subprocess` adapters** — §8 lists
+  seven adapters; Phase 3's acceptance criterion names three, and those
+  three are what the API/AI engines in Phases 5–6 need. The remaining four
+  land when there is an engine that actually exercises them, rather than
+  shipping four untested integration surfaces now.
+- **Live discovery (probing well-known spec paths on a target)** — surface
+  discovery is currently spec-upload-driven only. Fetching
+  `/openapi.json` from a live target is a scope-gated request like any
+  other and is straightforward to add; it is deferred to Phase 4, where the
+  orchestrator that would run it exists.
+- **Request-body parameter schemas are captured as content types only** —
+  the parser records *which* media types an operation accepts, not the full
+  inlined body schema. Generating valid/invalid request bodies from those
+  schemas is the input-validation probe's job (§10, Phase 5), which is
+  where the schema walk belongs.
+- **No frontend UI for surface review yet** — same reasoning as Phase 2's
+  scope UI deferral: both land together against a settled API surface.
+
 ## Later phases
 
-See `docs/BUILD_SPEC.md` §26 for the full phase plan (Phases 3–13: adapters
-& discovery, API/AI security engines, findings & risk, evidence & reporting,
+See `docs/BUILD_SPEC.md` §26 for the full phase plan (Phases 4–13: assessment
+engine, API/AI security engines, findings & risk, evidence & reporting,
 remediation & retest, CLI/CI gate, plugins, demo lab & hardening,
 documentation & release).

@@ -25,3 +25,6 @@ frontend/next-env.d.ts
 # Editors / OS
 .DS_Store
 *.swp
+
+# Redis snapshot from a locally-run redis-server
+dump.rdb

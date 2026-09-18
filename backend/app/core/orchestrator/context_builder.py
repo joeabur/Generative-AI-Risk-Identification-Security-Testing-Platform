@@ -7,12 +7,23 @@ unit-testable (docs/BUILD_SPEC.md §6, §22). This module is the bridge, not
 part of the pure engine.
 """
 
+from collections.abc import Mapping, Sequence
+
+from app.core.discovery.openapi import (
+    DiscoveredBodyField,
+    DiscoveredOperation,
+    DiscoveredParameter,
+)
+from app.core.probes.credentials import AuthorizationTestPlan, CredentialSet, SyntheticAccount
+from app.core.probes.protocol import ProbeTarget
 from app.core.scope.budgets import BudgetTracker
 from app.core.scope.context import RunContext
 from app.core.scope.errors import RoEValidationError
 from app.core.scope.kill_switch import KillSwitch
 from app.core.scope.models import ResolvedAuthorization
 from app.core.scope.resolve import resolve_authorization, resolve_rules_of_engagement
+from app.models.surface_endpoint import SurfaceEndpoint
+from app.models.synthetic_account import SyntheticAccount as SyntheticAccountRecord
 from app.models.target import Target
 
 
@@ -56,4 +67,88 @@ def build_run_context(target: Target) -> RunContext:
         authorization=authorization,
         budgets=BudgetTracker(roe.budgets),
         kill_switch=KillSwitch(),
+    )
+
+
+def build_probe_target(
+    target: Target,
+    endpoints: "Sequence[SurfaceEndpoint]",
+    accounts: "Sequence[SyntheticAccountRecord]",
+    *,
+    safe_mode: bool,
+    environ: "Mapping[str, str] | None" = None,
+) -> ProbeTarget:
+    """Turn persisted surface and account rows into what a probe may see.
+
+    Only enabled endpoints are passed through: disabling an endpoint is an
+    operator's instruction about what not to touch, and a probe should not
+    be able to see — let alone request — something that was excluded.
+
+    Credentials are resolved from the worker's environment here and nowhere
+    else. The database supplies only variable *names* (§2), so this is the
+    single point where a secret enters the process, and it goes straight
+    into a `CredentialSet` that exposes it only as a request header.
+    """
+    return ProbeTarget(
+        base_url=target.base_url,
+        operations=tuple(_operation_from_row(row) for row in endpoints if row.enabled),
+        safe_mode=safe_mode,
+        authorization=_authorization_plan(accounts, environ),
+    )
+
+
+def _operation_from_row(row: "SurfaceEndpoint") -> DiscoveredOperation:
+    return DiscoveredOperation(
+        method=row.method,
+        path=row.path,
+        operation_id=row.operation_id,
+        summary=row.summary,
+        parameters=tuple(
+            DiscoveredParameter(
+                name=str(parameter.get("name", "")),
+                location=str(parameter.get("in", "query")),
+                required=bool(parameter.get("required", False)),
+                schema_type=parameter.get("type"),
+            )
+            for parameter in row.parameters
+            if isinstance(parameter, dict)
+        ),
+        request_body_content_types=tuple(row.request_body_content_types),
+        body_fields=tuple(
+            DiscoveredBodyField(
+                name=str(field.get("name", "")),
+                schema_type=field.get("type"),
+                required=bool(field.get("required", False)),
+                read_only=bool(field.get("read_only", False)),
+                enum_values=tuple(str(value) for value in field.get("enum", []) or []),
+                minimum=field.get("minimum"),
+                maximum=field.get("maximum"),
+                max_length=field.get("max_length"),
+            )
+            for field in row.body_fields
+            if isinstance(field, dict)
+        ),
+        body_required=row.body_required,
+        security_schemes=tuple(row.security_schemes),
+        requires_auth=row.requires_auth,
+    )
+
+
+def _authorization_plan(
+    accounts: "Sequence[SyntheticAccountRecord]", environ: "Mapping[str, str] | None"
+) -> AuthorizationTestPlan:
+    declared = tuple(
+        SyntheticAccount(
+            label=row.label,
+            credential_env_var=row.credential_env_var,
+            header_name=row.header_name,
+            value_template=row.value_template,
+            owned_object_ids=tuple(str(value) for value in row.owned_object_ids),
+            is_privileged=row.is_privileged,
+        )
+        for row in accounts
+    )
+    return AuthorizationTestPlan(
+        accounts=declared,
+        credentials=CredentialSet.from_environment(declared, environ),
     )

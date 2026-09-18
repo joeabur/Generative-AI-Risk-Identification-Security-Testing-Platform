@@ -22,6 +22,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
+    from app.models.scan_result import ScanResultRecord
     from app.models.target import Target
 
 
@@ -98,6 +99,10 @@ class AssessmentRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     checks_completed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     requests_used: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     requests_blocked: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Scan results above informational. Informational rows include the
+    # deliberate "not tested" markers, which must never inflate a count an
+    # operator reads as "problems found".
+    findings_reported: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
     authorization_digest: Mapped[str | None] = mapped_column(String(71), nullable=True)
     roe_digest: Mapped[str | None] = mapped_column(String(71), nullable=True)
@@ -108,6 +113,9 @@ class AssessmentRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     target: Mapped["Target"] = relationship()
     events: Mapped[list["RunEvent"]] = relationship(
+        back_populates="run", cascade="all, delete-orphan"
+    )
+    scan_results: Mapped[list["ScanResultRecord"]] = relationship(
         back_populates="run", cascade="all, delete-orphan"
     )
 

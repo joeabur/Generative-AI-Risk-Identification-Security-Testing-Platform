@@ -17,7 +17,9 @@ from app.models import (  # noqa: F401 - registers metadata
     Organization,
     RulesOfEngagementRecord,
     RunEvent,
+    ScanResultRecord,
     SurfaceEndpoint,
+    SyntheticAccount,
     Target,
     User,
 )

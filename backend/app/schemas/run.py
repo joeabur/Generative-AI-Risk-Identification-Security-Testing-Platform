@@ -4,6 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.probes.models import Category, Confidence, Severity
 from app.models.assessment_run import RunEventKind, RunStatus
 
 
@@ -29,6 +30,7 @@ class RunRead(BaseModel):
     checks_completed: int
     requests_used: int
     requests_blocked: int
+    findings_reported: int
     authorization_digest: str | None
     roe_digest: str | None
     halted_reason: str | None
@@ -47,3 +49,29 @@ class RunEventRead(BaseModel):
     message: str
     payload: dict[str, Any] | None
     occurred_at: datetime
+
+
+class ScanResultRead(BaseModel):
+    """The §11.1 wire shape as stored. Note there is no risk score or
+    fingerprint here: promoting a scan result into a `Finding` is the
+    findings service's job, and inventing a score at the API boundary would
+    put a number on the screen that no model produced."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    seq: int
+    result_code: str
+    title: str
+    category: Category
+    severity: Severity
+    confidence: Confidence
+    endpoint: str
+    description: str
+    evidence: str
+    impact: str
+    remediation: str
+    probe_id: str
+    probe_version: str
+    frameworks: list[str]
+    reproduction: list[str]

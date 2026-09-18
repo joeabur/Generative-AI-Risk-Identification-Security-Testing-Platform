@@ -17,14 +17,19 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.orchestrator.checks import Check, Endpoint, ReachabilityCheck
-from app.core.orchestrator.context_builder import build_run_context
+from app.core.orchestrator.context_builder import build_probe_target, build_run_context
+from app.core.orchestrator.probe_check import ProbeCheck
 from app.core.orchestrator.runner import RunEventPayload, execute_run
+from app.core.probes.api.registry import build_api_registry
+from app.core.probes.models import ScanResult, Severity
 from app.core.scope.errors import AuthorizationRequiredError, RoEValidationError
 from app.core.scope.kill_switch import KillSwitch
 from app.core.scope.transport import GatedTransport
 from app.db.session import dispose_engine, get_session_factory
 from app.models.assessment_run import AssessmentRun, RunEvent, RunEventKind, RunStatus
+from app.models.scan_result import ScanResultRecord
 from app.models.surface_endpoint import SurfaceEndpoint
+from app.models.synthetic_account import SyntheticAccount
 from app.models.target import Target
 from app.workers.cancellation import is_cancellation_requested
 from app.workers.celery_app import celery_app
@@ -56,13 +61,52 @@ async def _load_run(db: AsyncSession, run_id: uuid.UUID) -> AssessmentRun | None
     return result.scalar_one_or_none()
 
 
-async def _enabled_endpoints(db: AsyncSession, target_id: uuid.UUID) -> list[Endpoint]:
+async def _enabled_endpoint_rows(db: AsyncSession, target_id: uuid.UUID) -> list[SurfaceEndpoint]:
     result = await db.execute(
         select(SurfaceEndpoint)
         .where(SurfaceEndpoint.target_id == target_id, SurfaceEndpoint.enabled.is_(True))
         .order_by(SurfaceEndpoint.path, SurfaceEndpoint.method)
     )
-    return [Endpoint(method=row.method, path=row.path) for row in result.scalars().all()]
+    return list(result.scalars().all())
+
+
+async def _synthetic_accounts(db: AsyncSession, target_id: uuid.UUID) -> list[SyntheticAccount]:
+    result = await db.execute(
+        select(SyntheticAccount)
+        .where(SyntheticAccount.target_id == target_id)
+        .order_by(SyntheticAccount.label)
+    )
+    return list(result.scalars().all())
+
+
+async def _persist_scan_results(
+    db: AsyncSession,
+    run_id: uuid.UUID,
+    organization_id: uuid.UUID,
+    results: list[ScanResult],
+) -> None:
+    for result in results:
+        db.add(
+            ScanResultRecord(
+                run_id=run_id,
+                organization_id=organization_id,
+                result_code=result.id,
+                title=result.title[:300],
+                category=result.category,
+                severity=result.severity,
+                confidence=result.confidence,
+                endpoint=result.endpoint[:2048],
+                description=result.description,
+                evidence=result.evidence,
+                impact=result.impact,
+                remediation=result.remediation,
+                probe_id=result.probe_id,
+                probe_version=result.probe_version,
+                frameworks=list(result.frameworks),
+                reproduction=list(result.reproduction),
+            )
+        )
+    await db.commit()
 
 
 async def execute_assessment_run(
@@ -102,8 +146,17 @@ async def execute_assessment_run(
         # the run at the next scope check rather than at the next check boundary.
         ctx.kill_switch = KillSwitch(probe=lambda: is_cancellation_requested(str(run_id)))
 
-        endpoints = await _enabled_endpoints(db, target.id)
-        checks: list[Check] = [ReachabilityCheck(target.base_url, endpoints)]
+        endpoint_rows = await _enabled_endpoint_rows(db, target.id)
+        accounts = await _synthetic_accounts(db, target.id)
+        probe_target = build_probe_target(target, endpoint_rows, accounts, safe_mode=run.safe_mode)
+        probe_check = ProbeCheck(build_api_registry(), probe_target)
+        checks: list[Check] = [
+            ReachabilityCheck(
+                target.base_url,
+                [Endpoint(method=row.method, path=row.path) for row in endpoint_rows],
+            ),
+            probe_check,
+        ]
 
         run.status = RunStatus.RUNNING
         run.started_at = datetime.now(UTC)
@@ -134,7 +187,14 @@ async def execute_assessment_run(
 
         outcome = await execute_run(ctx, checks, transport or GatedTransport(), emit)
 
+        await _persist_scan_results(db, run.id, run.organization_id, probe_check.scan_results)
+
         run.status = RunStatus(outcome.status.value)
+        run.findings_reported = sum(
+            1
+            for result in probe_check.scan_results
+            if result.severity is not Severity.INFORMATIONAL
+        )
         run.checks_completed = outcome.checks_completed
         run.requests_blocked = outcome.requests_blocked
         run.requests_used = len(outcome.results)

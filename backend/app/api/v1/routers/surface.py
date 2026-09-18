@@ -17,6 +17,7 @@ from app.core.discovery import openapi
 from app.models.api_spec import ApiSpec
 from app.models.organization import Membership, Role
 from app.models.surface_endpoint import SurfaceEndpoint, SurfaceSource
+from app.models.synthetic_account import SyntheticAccount
 from app.models.target import Target
 from app.schemas.surface import (
     ApiSpecRead,
@@ -24,6 +25,7 @@ from app.schemas.surface import (
     SurfaceEndpointUpdate,
     SurfaceImportResult,
 )
+from app.schemas.synthetic_account import SyntheticAccountRead, SyntheticAccountUpsert
 
 router = APIRouter(prefix="/organizations/{organization_id}/targets", tags=["surface"])
 
@@ -128,6 +130,20 @@ async def import_openapi_spec(
                 for parameter in operation.parameters
             ],
             request_body_content_types=list(operation.request_body_content_types),
+            body_fields=[
+                {
+                    "name": field.name,
+                    "type": field.schema_type,
+                    "required": field.required,
+                    "read_only": field.read_only,
+                    "enum": list(field.enum_values),
+                    "minimum": field.minimum,
+                    "maximum": field.maximum,
+                    "max_length": field.max_length,
+                }
+                for field in operation.body_fields
+            ],
+            body_required=operation.body_required,
             security_schemes=list(operation.security_schemes),
             requires_auth=operation.requires_auth,
             enabled=(operation.method, operation.path) not in previously_disabled,
@@ -237,3 +253,114 @@ async def update_surface_endpoint(
     await db.commit()
 
     return SurfaceEndpointRead.model_validate(endpoint)
+
+
+@router.put("/{target_id}/accounts/{label}", response_model=SyntheticAccountRead)
+async def upsert_synthetic_account(
+    organization_id: uuid.UUID,
+    target_id: uuid.UUID,
+    label: str,
+    payload: SyntheticAccountUpsert,
+    request: Request,
+    db: DbSession,
+    membership: Membership = Depends(require_membership(Role.ADMIN)),  # noqa: B008
+) -> SyntheticAccountRead:
+    """Declare an authorized synthetic test account.
+
+    Admin-only, alongside the authorization grant, because declaring a test
+    account is asserting that the operator is entitled to use it. The
+    platform stores the *name* of an environment variable the worker will
+    read; the credential itself never reaches this process, the database, or
+    a report (docs/BUILD_SPEC.md §2, §10).
+    """
+    target = await load_target(organization_id, target_id, db)
+    if payload.label != label:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="label in the path and the body must match",
+        )
+
+    result = await db.execute(
+        select(SyntheticAccount).where(
+            SyntheticAccount.target_id == target.id, SyntheticAccount.label == label
+        )
+    )
+    account = result.scalar_one_or_none()
+    if account is None:
+        account = SyntheticAccount(target_id=target.id, label=label)
+        db.add(account)
+
+    account.description = payload.description
+    account.credential_env_var = payload.credential_env_var
+    account.header_name = payload.header_name
+    account.value_template = payload.value_template
+    account.owned_object_ids = list(payload.owned_object_ids)
+    account.is_privileged = payload.is_privileged
+    await db.flush()
+
+    await record_event(
+        db,
+        action="target.account.upsert",
+        resource_type="target",
+        resource_id=str(target.id),
+        result="allow",
+        organization_id=organization_id,
+        user_id=membership.user_id,
+        ip_address=request.client.host if request.client else None,
+        # The variable name is metadata, not a secret; its value is never
+        # read by this process at all.
+        metadata={"label": label, "credential_env_var": payload.credential_env_var},
+    )
+    await db.commit()
+
+    return SyntheticAccountRead.model_validate(account)
+
+
+@router.get("/{target_id}/accounts", response_model=list[SyntheticAccountRead])
+async def list_synthetic_accounts(
+    organization_id: uuid.UUID,
+    target_id: uuid.UUID,
+    db: DbSession,
+    membership: Membership = Depends(require_membership(Role.VIEWER)),  # noqa: B008
+) -> list[SyntheticAccountRead]:
+    target = await load_target(organization_id, target_id, db)
+    result = await db.execute(
+        select(SyntheticAccount)
+        .where(SyntheticAccount.target_id == target.id)
+        .order_by(SyntheticAccount.label)
+    )
+    return [SyntheticAccountRead.model_validate(row) for row in result.scalars().all()]
+
+
+@router.delete("/{target_id}/accounts/{label}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_synthetic_account(
+    organization_id: uuid.UUID,
+    target_id: uuid.UUID,
+    label: str,
+    request: Request,
+    db: DbSession,
+    membership: Membership = Depends(require_membership(Role.ADMIN)),  # noqa: B008
+) -> None:
+    target = await load_target(organization_id, target_id, db)
+    result = await db.execute(
+        select(SyntheticAccount).where(
+            SyntheticAccount.target_id == target.id, SyntheticAccount.label == label
+        )
+    )
+    account = result.scalar_one_or_none()
+    if account is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Account not found")
+
+    await db.delete(account)
+    await record_event(
+        db,
+        action="target.account.delete",
+        resource_type="target",
+        resource_id=str(target.id),
+        result="allow",
+        organization_id=organization_id,
+        user_id=membership.user_id,
+        ip_address=request.client.host if request.client else None,
+        metadata={"label": label},
+    )
+    await db.commit()

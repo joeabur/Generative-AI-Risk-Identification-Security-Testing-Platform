@@ -14,6 +14,7 @@ from app.api.v1.routers.targets import load_target
 from app.audit.service import record_event
 from app.auth.dependencies import DbSession, require_membership
 from app.core.orchestrator.context_builder import build_run_context
+from app.core.probes.models import Severity
 from app.core.scope.errors import AuthorizationRequiredError, RoEValidationError
 from app.db.session import get_session_factory
 from app.models.assessment_run import (
@@ -24,7 +25,8 @@ from app.models.assessment_run import (
     RunStatus,
 )
 from app.models.organization import Membership, Role
-from app.schemas.run import RunCreate, RunEventRead, RunRead
+from app.models.scan_result import ScanResultRecord
+from app.schemas.run import RunCreate, RunEventRead, RunRead, ScanResultRead
 from app.workers.cancellation import request_cancellation
 from app.workers.celery_app import celery_app
 
@@ -173,6 +175,31 @@ async def list_run_events(
         .order_by(RunEvent.seq)
     )
     return [RunEventRead.model_validate(event) for event in result.scalars().all()]
+
+
+@router.get("/{run_id}/results", response_model=list[ScanResultRead])
+async def list_run_results(
+    organization_id: uuid.UUID,
+    run_id: uuid.UUID,
+    db: DbSession,
+    include_informational: bool = True,
+    membership: Membership = Depends(require_membership(Role.VIEWER)),  # noqa: B008
+) -> list[ScanResultRead]:
+    """What the probes reported for this run.
+
+    `include_informational` defaults to true on purpose: the informational
+    rows are where "this was not tested" lives, and a reader who filters
+    them out should do so knowingly rather than by default
+    (docs/BUILD_SPEC.md §14 coverage honesty).
+    """
+    await _load_run(organization_id, run_id, db)
+
+    query = select(ScanResultRecord).where(ScanResultRecord.run_id == run_id)
+    if not include_informational:
+        query = query.where(ScanResultRecord.severity != Severity.INFORMATIONAL)
+
+    result = await db.execute(query.order_by(ScanResultRecord.seq))
+    return [ScanResultRead.model_validate(row) for row in result.scalars().all()]
 
 
 @router.post("/{run_id}/cancel", response_model=RunRead)

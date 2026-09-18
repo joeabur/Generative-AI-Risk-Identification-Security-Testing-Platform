@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from app.models.authorization import Authorization
     from app.models.rules_of_engagement import RulesOfEngagementRecord
     from app.models.surface_endpoint import SurfaceEndpoint
+    from app.models.synthetic_account import SyntheticAccount
 
 
 class TargetEnvironment(enum.StrEnum):
@@ -69,5 +70,8 @@ class Target(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         back_populates="target", uselist=False, cascade="all, delete-orphan"
     )
     surface_endpoints: Mapped[list["SurfaceEndpoint"]] = relationship(
+        back_populates="target", cascade="all, delete-orphan"
+    )
+    synthetic_accounts: Mapped[list["SyntheticAccount"]] = relationship(
         back_populates="target", cascade="all, delete-orphan"
     )

@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Backend runtime artifacts
+backend/var/
+
+# Node / frontend
+node_modules/
+.next/
+frontend/next-env.d.ts
+
+# Environment
+.env
+.env.local
+*.env.*.local
+
+# Editors / OS
+.DS_Store
+*.swp

@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least-privilege default; jobs below don't need anything beyond read access.
+permissions:
+  contents: read
+
+# NOTE: actions are pinned to version tags, not commit SHAs, in this Phase-1
+# workflow. Full SHA-pinning (docs/BUILD_SPEC.md §23) is deferred to the
+# Phase 11 supply-chain hardening pass — see docs/roadmap.md — rather than
+# fabricating unverified SHAs here (a wrong SHA breaks CI outright, which is
+# a worse defect than a version tag pending verification).
+
+jobs:
+  backend:
+    name: Backend (ruff, mypy, pytest)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: aegis
+          POSTGRES_PASSWORD: aegis-ci-only
+          POSTGRES_DB: aegis_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U aegis -d aegis_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://aegis:aegis-ci-only@localhost:5432/aegis_test
+      REDIS_URL: redis://localhost:6379/0
+      ENVIRONMENT: ci
+      JWT_SECRET: ci-only-secret-do-not-use-elsewhere
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: pip install -e ".[dev]"
+
+      - name: Ruff
+        working-directory: backend
+        run: ruff check .
+
+      - name: Mypy (strict)
+        working-directory: backend
+        run: mypy app
+
+      - name: Apply migrations
+        working-directory: backend
+        run: alembic upgrade head
+
+      - name: Pytest
+        working-directory: backend
+        run: python -m pytest -q --cov=app --cov-report=term-missing
+
+  frontend:
+    name: Frontend (lint, typecheck, test, build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: ESLint
+        working-directory: frontend
+        run: npm run lint
+
+      - name: TypeScript
+        working-directory: frontend
+        run: npm run typecheck
+
+      - name: Vitest
+        working-directory: frontend
+        run: npm test
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build

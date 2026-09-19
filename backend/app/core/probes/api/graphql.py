@@ -14,7 +14,7 @@ complexity limit to reject, and not enough to hurt one without.
 import json
 from urllib.parse import urljoin
 
-from app.core.probes.api._support import body_text, clip, try_send
+from app.core.probes.api._support import body_text, clip, evidence_of, try_send
 from app.core.probes.models import Category, Confidence, ScanResult, Severity
 from app.core.probes.protocol import ProbeTarget
 from app.core.scope.context import RunContext
@@ -147,6 +147,16 @@ class GraphQLIntrospectionProbe:
                         f"POST {url} with query {_INTROSPECTION_QUERY}.",
                         "Observe the schema in the response rather than an error.",
                     ),
+                    # The schema is the finding, and it is the target's own
+                    # published contract rather than anybody's data.
+                    evidence_bundle=evidence_of(
+                        observation,
+                        probe_id=self.id,
+                        probe_version=self.version,
+                        request_body=_INTROSPECTION_QUERY,
+                        verdict="introspection answered with a schema",
+                        include_body=True,
+                    ),
                 )
             )
         return results
@@ -179,6 +189,8 @@ class GraphQLQueryCostProbe:
                     self._result(
                         path,
                         url,
+                        observation=depth_response,
+                        request_body=_nested_query(_DEPTH),
                         title="GraphQL query depth is not limited",
                         detail=(
                             f"A query nested {_DEPTH} levels deep was accepted without a "
@@ -196,6 +208,8 @@ class GraphQLQueryCostProbe:
                     self._result(
                         path,
                         url,
+                        observation=alias_response,
+                        request_body=_alias_query(_ALIAS_COUNT),
                         title="GraphQL aliasing is not limited",
                         detail=(
                             f"A query repeating {_ALIAS_COUNT} aliases of the same field "
@@ -215,6 +229,8 @@ class GraphQLQueryCostProbe:
         path: str,
         url: str,
         *,
+        observation: Observation,
+        request_body: str,
         title: str,
         detail: str,
         status_code: int,
@@ -248,6 +264,15 @@ class GraphQLQueryCostProbe:
             reproduction=(
                 f"POST {url} with a {query}.",
                 f"Observe HTTP {status_code} with no depth or complexity error.",
+            ),
+            # No body: what matters is that the query was accepted, not what
+            # it returned, and an unbounded query's response can be large.
+            evidence_bundle=evidence_of(
+                observation,
+                probe_id=self.id,
+                probe_version=self.version,
+                request_body=request_body,
+                verdict=f"accepted a {query}: HTTP {status_code}, no complexity error",
             ),
         )
 
@@ -309,6 +334,14 @@ class GraphQLErrorVerbosityProbe:
                     reproduction=(
                         f"POST {url} with query {{ aegisNoSuchField }}.",
                         f"Observe {marker!r} in the response body.",
+                    ),
+                    evidence_bundle=evidence_of(
+                        observation,
+                        probe_id=self.id,
+                        probe_version=self.version,
+                        request_body="{ aegisNoSuchField }",
+                        verdict=f"resolver internals matched {marker!r}",
+                        include_body=True,
                     ),
                 )
             )

@@ -23,6 +23,17 @@ class Settings(BaseSettings):
     )
     redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
 
+    # --- AI layer (optional end to end) ------------------------------------
+    # Absent means the whole assistant is off and every other part of the
+    # platform behaves identically. `ai_api_key_env_var` is the NAME of an
+    # environment variable; a key is never stored in configuration, the
+    # database, or a log.
+    ai_provider: str | None = Field(default=None, alias="AI_PROVIDER")
+    ai_endpoint: str | None = Field(default=None, alias="AI_ENDPOINT")
+    ai_model: str | None = Field(default=None, alias="AI_MODEL")
+    ai_api_key_env_var: str | None = Field(default=None, alias="AI_API_KEY_ENV_VAR")
+    ai_autonomy_mode: str = Field(default="ASSIST", alias="AI_AUTONOMY_MODE")
+
     jwt_secret: str = Field(default="insecure-local-dev-secret-change-me", alias="JWT_SECRET")
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60 * 12
@@ -30,6 +41,20 @@ class Settings(BaseSettings):
     cors_allowed_origins: list[str] = Field(
         default=["http://localhost:3000"], alias="CORS_ALLOWED_ORIGINS"
     )
+
+    # Where evidence bundles and their hash-chained manifests are written
+    # (docs/BUILD_SPEC.md §13). A path, not a URL: evidence never leaves the
+    # deployment by default, and there is no public download URL for it.
+    evidence_root: str = Field(default="var/evidence", alias="EVIDENCE_ROOT")
+
+    # --- plugins (docs/BUILD_SPEC.md §16) ---------------------------------
+    # Off unless an operator points at a configuration file that names the
+    # packages allowed to load. `pip install` must not be what decides which
+    # code runs inside the scope engine's process. `AEGIS_NO_PLUGINS=1` is the
+    # `--no-plugins` switch: it wins over any configuration, so there is always
+    # one thing to set when something has gone wrong.
+    plugins_config: str | None = Field(default=None, alias="PLUGINS_CONFIG")
+    no_plugins: bool = Field(default=False, alias="AEGIS_NO_PLUGINS")
 
     session_cookie_name: str = "aegis_session"
     session_cookie_secure: bool = Field(default=False, alias="SESSION_COOKIE_SECURE")

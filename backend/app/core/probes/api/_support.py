@@ -7,6 +7,8 @@ to reach the network that the scope engine has not approved.
 from urllib.parse import quote, urljoin
 
 from app.core.discovery.openapi import DiscoveredOperation
+from app.core.evidence.bundle import EvidenceBundle
+from app.core.evidence.observation import bundle_from_observation
 from app.core.probes.models import Category, Confidence, ScanResult, Severity
 from app.core.scope.context import RunContext
 from app.core.scope.transport import GatedTransport, Observation, ScopeBlockedError
@@ -77,6 +79,33 @@ def body_text(observation: Observation) -> str:
 def clip(text: str, limit: int = MAX_EVIDENCE_CHARS) -> str:
     text = text.strip()
     return text if len(text) <= limit else text[:limit] + "… (truncated)"
+
+
+def evidence_of(
+    observation: Observation,
+    *,
+    probe_id: str,
+    probe_version: str,
+    verdict: str,
+    request_headers: dict[str, str] | None = None,
+    request_body: str = "",
+    include_body: bool = False,
+) -> EvidenceBundle:
+    """The sealed bundle for an exchange a probe reported on.
+
+    Thin by design: the conversion lives in `app.core.evidence.observation`
+    so the DAST engine gets the same one, and the redaction lives in
+    `build_bundle` so nothing here can weaken it.
+    """
+    return bundle_from_observation(
+        observation,
+        probe_id=probe_id,
+        probe_version=probe_version,
+        verdict=verdict,
+        request_headers=request_headers,
+        request_body=request_body,
+        include_body=include_body,
+    )
 
 
 def untested(

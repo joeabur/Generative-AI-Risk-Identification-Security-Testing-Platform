@@ -1,0 +1,69 @@
+# Local Semgrep ruleset (docs/BUILD_SPEC.md §15; Addendum v2.1 §4.1).
+#
+# Deliberately small. The addendum limits native rules to "genuinely
+# project-specific checks" and says not to write a competing static-analysis
+# engine, so this file exists for two reasons only:
+#
+#   1. It lets Semgrep run **offline**. Pointing `--config` at a registry
+#      ruleset (`p/default`) downloads it, and a subprocess that reaches the
+#      network is an outbound path §6.3 governs. An operator can opt into a
+#      registry ruleset explicitly; the default invocation does not.
+#   2. `aegis.ungated-http-client` is this platform dogfooding its own
+#      central rule — every outbound request goes through the scope-gated
+#      transport — in a form any project can adopt.
+#
+# Every rule carries the CWE its author assigns, so the mapping on a finding
+# comes from the rule rather than from anything this platform infers.
+rules:
+  - id: aegis.ungated-http-client
+    languages: [python]
+    severity: WARNING
+    message: >-
+      An HTTP client is constructed directly. Projects that route outbound
+      requests through a single audited choke point lose that guarantee here.
+    metadata:
+      cwe: "CWE-1188: Insecure Default Initialization of Resource"
+      category: security
+    patterns:
+      - pattern-either:
+          - pattern: httpx.AsyncClient(...)
+          - pattern: httpx.Client(...)
+          - pattern: requests.Session(...)
+
+  - id: aegis.python.unsafe-yaml-load
+    languages: [python]
+    severity: ERROR
+    message: >-
+      yaml.load without a safe loader constructs arbitrary Python objects from
+      the document, so parsing untrusted YAML is equivalent to executing it.
+    metadata:
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      category: security
+    patterns:
+      - pattern: yaml.load($X)
+
+  - id: aegis.python.tls-verification-disabled
+    languages: [python]
+    severity: ERROR
+    message: >-
+      TLS certificate verification is disabled, so the connection is
+      authenticated against nothing and can be transparently intercepted.
+    metadata:
+      cwe: "CWE-295: Improper Certificate Validation"
+      category: security
+    patterns:
+      - pattern-either:
+          - pattern: requests.$M(..., verify=False, ...)
+          - pattern: httpx.$M(..., verify=False, ...)
+
+  - id: aegis.python.debug-server-enabled
+    languages: [python]
+    severity: ERROR
+    message: >-
+      A development server is started with the debugger enabled, which exposes
+      an interactive console to anyone who can reach it.
+    metadata:
+      cwe: "CWE-489: Active Debug Code"
+      category: security
+    patterns:
+      - pattern: $APP.run(..., debug=True, ...)

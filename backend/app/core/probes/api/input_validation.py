@@ -20,6 +20,7 @@ from app.core.discovery.openapi import DiscoveredOperation
 from app.core.probes.api._support import (
     body_text,
     clip,
+    evidence_of,
     operation_url,
     surface_label,
     try_send,
@@ -27,7 +28,7 @@ from app.core.probes.api._support import (
 from app.core.probes.models import Category, Confidence, ScanResult, Severity
 from app.core.probes.protocol import ProbeTarget
 from app.core.scope.context import RunContext
-from app.core.scope.transport import GatedTransport
+from app.core.scope.transport import GatedTransport, Observation
 
 # Bounds so one badly-shaped surface cannot spend a whole run's budget.
 MAX_CASES_PER_OPERATION = 4
@@ -86,13 +87,9 @@ class InputValidationProbe:
 
                 surface = surface_label(operation)
                 if observation.status_code >= 500:
-                    results.append(
-                        self._server_error(
-                            surface, case, observation.status_code, body_text(observation)
-                        )
-                    )
+                    results.append(self._server_error(surface, case, observation))
                 elif 200 <= observation.status_code < 300:
-                    results.append(self._accepted(surface, case, observation.status_code))
+                    results.append(self._accepted(surface, case, observation))
 
         return results
 
@@ -178,7 +175,9 @@ class InputValidationProbe:
                 )
         return cases
 
-    def _server_error(self, surface: str, case: _Case, status_code: int, body: str) -> ScanResult:
+    def _server_error(self, surface: str, case: _Case, observation: Observation) -> ScanResult:
+        status_code = observation.status_code
+        body = body_text(observation)
         return ScanResult(
             id="AEGIS-API-040",
             title="Invalid input causes a server error",
@@ -209,9 +208,21 @@ class InputValidationProbe:
                 + (" with a malformed JSON body." if case.content else "."),
                 f"Observe HTTP {status_code} rather than a 400.",
             ),
+            # The 5xx body is the finding: it is where the unhandled path
+            # names itself. Redacted on the way in, like every bundle.
+            evidence_bundle=evidence_of(
+                observation,
+                probe_id=self.id,
+                probe_version=self.version,
+                request_headers=case.headers,
+                request_body=(case.content or b"").decode("utf-8", errors="replace"),
+                verdict=f"HTTP {status_code} from input that violates the declared schema",
+                include_body=True,
+            ),
         )
 
-    def _accepted(self, surface: str, case: _Case, status_code: int) -> ScanResult:
+    def _accepted(self, surface: str, case: _Case, observation: Observation) -> ScanResult:
+        status_code = observation.status_code
         return ScanResult(
             id="AEGIS-API-041",
             title="Input violating the declared schema is accepted",
@@ -240,5 +251,15 @@ class InputValidationProbe:
             reproduction=(
                 f"Send {case.method} {case.url}.",
                 f"Observe HTTP {status_code} rather than a 400.",
+            ),
+            # No body: what the endpoint returned for out-of-contract input
+            # is not the point — that it answered at all is.
+            evidence_bundle=evidence_of(
+                observation,
+                probe_id=self.id,
+                probe_version=self.version,
+                request_headers=case.headers,
+                request_body=(case.content or b"").decode("utf-8", errors="replace"),
+                verdict=f"HTTP {status_code} for input the specification forbids",
             ),
         )

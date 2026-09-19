@@ -91,6 +91,12 @@ class GatedTransport:
 
         async with ctx.budgets.acquire_concurrency():
             start = time.monotonic()
+            # This *is* the choke point the rule below exists to protect.
+            # Every outbound request reaches the network here and nowhere
+            # else, and `tests/security/test_scope_controls.py` greps `app/`
+            # to keep it that way. Suppressed at the line rather than by
+            # excluding the file, so the exception stays visible.
+            # nosemgrep: aegis.ungated-http-client
             async with httpx.AsyncClient(timeout=timeout_seconds, follow_redirects=False) as client:
                 response = await client.request(method, url, headers=headers, content=content)
             elapsed_ms = (time.monotonic() - start) * 1000

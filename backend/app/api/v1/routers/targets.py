@@ -13,6 +13,8 @@ from app.core.scope.dns import DnsResolver, SystemDnsResolver
 from app.core.scope.engine import ScopeEngine
 from app.core.scope.errors import AuthorizationRequiredError, RoEValidationError
 from app.core.scope.resolve import resolve_rules_of_engagement
+from app.core.targets.chat_http import ChatHttpConfig
+from app.core.targets.openai_compatible import OpenAiCompatibleConfig
 from app.models.authorization import Authorization
 from app.models.organization import Membership, Role
 from app.models.rules_of_engagement import RulesOfEngagementRecord
@@ -23,7 +25,12 @@ from app.schemas.scope import (
     ScopeExplainRequest,
     ScopeExplainResponse,
 )
-from app.schemas.target import TargetCreate, TargetRead
+from app.schemas.target import (
+    TargetAdapterUpdate,
+    TargetCodeUpdate,
+    TargetCreate,
+    TargetRead,
+)
 
 router = APIRouter(prefix="/organizations/{organization_id}/targets", tags=["targets"])
 
@@ -46,6 +53,12 @@ def _target_read(target: Target) -> TargetRead:
         environment=target.environment,
         kind=target.kind,
         base_url=target.base_url,
+        adapter_kind=target.adapter_kind,
+        code_repo_ref=target.code_repo_ref,
+        code_languages=[str(item) for item in (target.code_languages or [])],
+        code_build_manifest_paths=[str(item) for item in (target.code_build_manifest_paths or [])],
+        adapter_config=dict(target.adapter_config or {}),
+        declared_tools=list(target.declared_tools or []),
         has_authorization=target.authorization is not None,
         has_rules_of_engagement=target.rules_of_engagement is not None,
         created_at=target.created_at,
@@ -318,3 +331,116 @@ async def explain_scope(
     return ScopeExplainResponse(
         allowed=decision.allowed, rule=decision.rule, reason=decision.reason
     )
+
+
+@router.put("/{target_id}/adapter", response_model=TargetRead)
+async def configure_adapter(
+    organization_id: uuid.UUID,
+    target_id: uuid.UUID,
+    payload: TargetAdapterUpdate,
+    request: Request,
+    db: DbSession,
+    membership: Membership = Depends(require_membership(Role.SECURITY_ENGINEER)),  # noqa: B008
+) -> TargetRead:
+    """Configure the conversational adapter and declare the tool surface.
+
+    The configuration is validated by constructing the adapter here rather
+    than at scan time, so a bad response path or a missing prompt
+    placeholder is a 422 now instead of a failed run later
+    (docs/BUILD_SPEC.md §8).
+    """
+    target = await load_target(organization_id, target_id, db)
+
+    config = dict(payload.adapter_config)
+    config.setdefault("base_url", target.base_url)
+    try:
+        if payload.adapter_kind == "chat_http":
+            ChatHttpConfig(**config)
+        else:
+            OpenAiCompatibleConfig(**config)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"invalid {payload.adapter_kind} configuration: {exc}",
+        ) from exc
+
+    target.adapter_kind = payload.adapter_kind
+    target.adapter_config = config
+    target.declared_tools = [tool.model_dump() for tool in payload.declared_tools]
+    await db.flush()
+
+    await record_event(
+        db,
+        action="target.adapter.configure",
+        resource_type="target",
+        resource_id=str(target.id),
+        result="allow",
+        organization_id=organization_id,
+        user_id=membership.user_id,
+        ip_address=request.client.host if request.client else None,
+        metadata={
+            "adapter_kind": payload.adapter_kind,
+            "declared_tools": len(payload.declared_tools),
+        },
+    )
+    await db.commit()
+
+    return _target_read(target)
+
+
+@router.put("/{target_id}/code", response_model=TargetRead)
+async def configure_code_scope(
+    organization_id: uuid.UUID,
+    target_id: uuid.UUID,
+    payload: TargetCodeUpdate,
+    request: Request,
+    db: DbSession,
+    membership: Membership = Depends(require_membership(Role.ADMIN)),  # noqa: B008
+) -> TargetRead:
+    """Declare the source-code surface and the paths that may be scanned.
+
+    Admin-only, like the authorization grant: pointing an assessment at a
+    repository asserts entitlement to read it. Rules of Engagement must
+    already exist, because `code_scope` lives on them — the boundary is part
+    of the engagement, not a property of the target
+    (docs/BUILD_SPEC.md §4.5; Addendum v2.1 §3).
+    """
+    target = await load_target(organization_id, target_id, db)
+    if target.rules_of_engagement is None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail=(
+                "Configure Rules of Engagement before declaring a code scope: the "
+                "scope is part of the engagement."
+            ),
+        )
+
+    target.code_repo_ref = payload.repo_ref
+    target.code_languages = list(payload.languages)
+    target.code_build_manifest_paths = list(payload.build_manifest_paths)
+    target.rules_of_engagement.code_scope = {
+        "allowed_paths": list(payload.code_scope.allowed_paths),
+        "excluded_paths": list(payload.code_scope.excluded_paths),
+        "max_repo_size_mb": payload.code_scope.max_repo_size_mb,
+        "allowed_repo_hosts": list(payload.code_scope.allowed_repo_hosts),
+    }
+    await db.flush()
+
+    await record_event(
+        db,
+        action="target.code_scope.configure",
+        resource_type="target",
+        resource_id=str(target.id),
+        result="allow",
+        organization_id=organization_id,
+        user_id=membership.user_id,
+        ip_address=request.client.host if request.client else None,
+        metadata={
+            "repo_ref": payload.repo_ref,
+            "allowed_paths": len(payload.code_scope.allowed_paths),
+            "excluded_paths": len(payload.code_scope.excluded_paths),
+        },
+    )
+    await db.commit()
+
+    return _target_read(target)

@@ -11,12 +11,24 @@ engine, determinism/ASR methodology, domain model, and the phased build
 plan — lives in **[`docs/BUILD_SPEC.md`](docs/BUILD_SPEC.md)**. Read that
 first; this README is the practical "how do I run it" companion.
 
-**Current status: Phase 1 of 13 (Foundation).** Authentication,
-organizations, role-based access control, and the multi-service deployment
-shape are real and working end to end. The actual security-testing engine
-(scope enforcement, adapters, AI/API probes, findings, evidence, reporting)
-does not exist yet — see [`docs/roadmap.md`](docs/roadmap.md) for exactly
-what's built versus deferred, and why.
+**Current status: through Phase 11, plus Phases 14–16.** What works end to
+end today: the scope/authorization engine and its gated transport (the single
+outbound control point), target adapters and OpenAPI discovery, run
+orchestration with cancellation and live progress, 16 API probes, 11 AI
+probes measured with Wilson-interval attack success rates against their own
+controls, the SAST/SCA/secrets/IaC engines, the AI assistant layer (drafts
+only, never execution), risk-scored findings with stable fingerprints, and
+content-addressed evidence plus reports in Markdown, HTML, PDF, JSON, SARIF
+2.1.0 and CSV, and a remediation board with a retest workflow that reports
+reproduced / not reproduced / not tested with the evidence from either side.
+
+There is also an `aegis-ai` CLI and a CI security gate with documented exit
+codes — see [`docs/cicd.md`](docs/cicd.md).
+
+Still to come: the demo lab (Phase 12), the release documentation (13),
+DAST (15), and the HTMX dashboard (17) — the shipped
+frontend is still the auth scaffold only. [`docs/roadmap.md`](docs/roadmap.md) records exactly
+what's built versus deferred, and why, phase by phase.
 
 ## Why this exists
 
@@ -56,8 +68,11 @@ docker compose up --build
 ```
 
 Then open <http://localhost:3000>, register an account, and create an
-organization. Everything past that (assets, assessments, findings) is not
-built yet in this phase.
+organization. The web UI stops there — targets, runs, findings, reports and
+evidence exist as API endpoints, not yet as pages (the dashboard is Phase
+17), so drive them against <http://localhost:8000/docs> for now. Nothing will
+reach a target until you record an authorization grant and Rules of
+Engagement for it; that refusal is the point.
 
 > **Note on this sandbox's own validation:** the application was validated
 > end to end by running the backend under `uvicorn` against a live
@@ -122,11 +137,21 @@ clean, `next build` succeeds.
 - Structured error responses never leak stack traces or internal exception
   details to the client.
 
-What does **not** exist yet: the scope/authorization engine that gates
-outbound requests to a target (`docs/BUILD_SPEC.md` §6 — this is Phase 2 and
-is the actual safety boundary for the product's core purpose), rate
-limiting on auth endpoints, and server-side JWT revocation. See
-`docs/roadmap.md` for the complete list.
+- The scope engine is the single outbound control point: exclusions are
+  checked before allowlists, DNS is re-resolved per request, private and
+  cloud-metadata ranges are refused, and redirects are never followed
+  automatically. `GatedTransport` is the only place an HTTP client may be
+  constructed, and a static test greps `app/` to keep it that way.
+- Evidence is redacted before it is written, stored content-addressed with a
+  hash-chained manifest, and served only to a member of the owning
+  organization — there are no public report or evidence URLs. It is **not**
+  encrypted at rest; see `docs/roadmap.md`.
+- The AI assistant layer can draft and recommend. It cannot start a scan,
+  grant authorization, or change a finding's real fields under any
+  configuration.
+
+What does **not** exist yet: rate limiting on auth endpoints and server-side
+JWT revocation. See `docs/roadmap.md` for the complete list.
 
 ## Documentation
 
@@ -134,6 +159,12 @@ limiting on auth endpoints, and server-side JWT revocation. See
   specification (mission, safety policy, architecture, domain model, probe
   catalogue, risk scoring, reporting, phased plan, definition of done).
 - [`docs/decisions/`](docs/decisions/) — architecture decision records.
+- [`docs/plugin-development.md`](docs/plugin-development.md) — writing a
+  plugin, what the platform guarantees it, and what it explicitly does not
+  (there is no sandbox, and the allowlist is the control).
+- [`docs/cicd.md`](docs/cicd.md) — the `aegis-ai` CLI, API keys, and the CI
+  security gate: its exit codes, and why it refuses to fail a build on an
+  unstable finding.
 - [`docs/roadmap.md`](docs/roadmap.md) — what's built, what's deferred, and
   why.
 

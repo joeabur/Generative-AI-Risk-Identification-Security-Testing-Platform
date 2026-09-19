@@ -26,6 +26,19 @@ if TYPE_CHECKING:
     from app.models.target import Target
 
 
+class RunKind(enum.StrEnum):
+    """What a run is for.
+
+    A retest is a scan — same authorization gate, same scope engine, same
+    budgets, same evidence path — so it is this table with a different intent
+    rather than a parallel mechanism that would have to re-earn every safety
+    property from scratch.
+    """
+
+    ASSESSMENT = "assessment"
+    RETEST = "retest"
+
+
 class RunStatus(enum.StrEnum):
     """docs/BUILD_SPEC.md §15. `EXPIRED` is distinct from `CANCELLED`: it
     means the target's authorization window closed, which the scope engine
@@ -78,6 +91,26 @@ class AssessmentRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     status: Mapped[RunStatus] = mapped_column(
         Enum(RunStatus, name="run_status_enum"), nullable=False, default=RunStatus.DRAFT
     )
+    kind: Mapped[RunKind] = mapped_column(
+        Enum(RunKind, name="run_kind_enum"), nullable=False, default=RunKind.ASSESSMENT
+    )
+    # For a retest: the run whose findings are being re-checked, and the
+    # baseline it was asked about — one entry per finding, carrying its id,
+    # its fingerprint and the evidence digest it had *before* this run. The
+    # baseline is stored rather than derived because both halves would
+    # otherwise move underneath the comparison: a later triage changes a
+    # finding's state, and the retest itself overwrites its evidence
+    # reference. "What did we set out to check, and what did it look like
+    # then" has to be a fixed record.
+    retest_of_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("assessment_runs.id", ondelete="SET NULL"), nullable=True
+    )
+    retest_baseline: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    # Which probes and engines actually executed in this run, by id. Recorded
+    # because "this probe reported nothing" and "this probe never ran" look
+    # identical from the results table, and a retest that cannot tell them
+    # apart would read a skipped probe as a fix.
+    probes_executed: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
     profile: Mapped[str] = mapped_column(String(50), nullable=False, default="connectivity")
     safe_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 

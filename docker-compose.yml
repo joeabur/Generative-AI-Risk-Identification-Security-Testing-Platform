@@ -51,6 +51,10 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://aegis:aegis-dev-only-change-me@postgres:5432/aegis}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      # Shared with the worker: the worker writes evidence, the API serves it.
+      EVIDENCE_ROOT: ${EVIDENCE_ROOT:-/var/lib/aegis/evidence}
+    volumes:
+      - evidence_data:/var/lib/aegis/evidence
     ports:
       - "8000:8000"
     depends_on:
@@ -69,6 +73,9 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql+asyncpg://aegis:aegis-dev-only-change-me@postgres:5432/aegis}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      EVIDENCE_ROOT: ${EVIDENCE_ROOT:-/var/lib/aegis/evidence}
+    volumes:
+      - evidence_data:/var/lib/aegis/evidence
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -90,3 +97,7 @@ services:
 
 volumes:
   postgres_data:
+  # Evidence bundles and their manifests. Unencrypted by design and honestly
+  # documented as such (docs/BUILD_SPEC.md §13, docs/roadmap.md): treat this
+  # volume like a log of production traffic.
+  evidence_data:

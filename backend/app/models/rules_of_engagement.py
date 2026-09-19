@@ -38,5 +38,13 @@ class RulesOfEngagementRecord(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     blackout_windows: Mapped[list[dict[str, Any]]] = mapped_column(
         JSON, nullable=False, default=list
     )
+    # Which paths inside a checkout may be read (Addendum v2.1 §3). An empty
+    # allowlist is not "everything" — the code engines refuse to run until
+    # the boundary is stated, exactly as §6.2 refuses an unresolved URL scope.
+    code_scope: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # Kept separate from `budgets` because crawling a repository and calling a
+    # model are not the same resource: one scanner run must not be able to
+    # spend the token budget an AI assessment was granted.
+    appsec_budgets: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
     target: Mapped["Target"] = relationship(back_populates="rules_of_engagement")

@@ -75,3 +75,6 @@ class ScanResultRead(BaseModel):
     probe_version: str
     frameworks: list[str]
     reproduction: list[str]
+    fingerprint: str | None
+    measurement: dict[str, Any] | None
+    stability: str | None

@@ -1,4 +1,6 @@
 import os
+import pathlib
+import tempfile
 from collections.abc import AsyncGenerator
 
 import pytest
@@ -12,6 +14,13 @@ os.environ.setdefault(
 )
 os.environ.setdefault("ENVIRONMENT", "ci")
 os.environ.setdefault("JWT_SECRET", "test-only-secret-do-not-use-elsewhere")
+# One evidence root for the whole session, outside the repository. The worker
+# and the download endpoint both read it from settings, so they agree without
+# a dependency override — which is the point: the test exercises the real
+# path from "a probe observed this" to "a member downloaded it".
+os.environ.setdefault(
+    "EVIDENCE_ROOT", str(pathlib.Path(tempfile.gettempdir()) / "aegis-test-evidence")
+)
 
 from app.api.v1.routers.targets import get_dns_resolver  # noqa: E402
 from app.core.config import get_settings  # noqa: E402
@@ -26,6 +35,11 @@ test_engine = create_async_engine(settings.database_url)
 TestSessionLocal = async_sessionmaker(bind=test_engine, expire_on_commit=False, class_=AsyncSession)
 
 _TABLES = [
+    "ai_drafts",
+    "api_keys",
+    "retest_results",
+    "remediation_tasks",
+    "findings",
     "scan_results",
     "run_events",
     "assessment_runs",

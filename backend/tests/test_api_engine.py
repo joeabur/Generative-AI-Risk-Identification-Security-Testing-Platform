@@ -210,3 +210,61 @@ async def test_no_credential_value_ever_reaches_a_result(
         )
         for secret in (TOKEN_A, TOKEN_B, TOKEN_ADMIN):
             assert secret not in blob, f"{result.id} leaked a credential"
+
+
+# --- evidence (the Observation -> bundle pipeline the transport promised) --
+
+# Findings that come from reading the specification rather than from an
+# exchange. They carry no bundle by design, and naming them here means a new
+# probe cannot quietly join the list.
+_ANALYSIS_ONLY = {
+    "AEGIS-API-002",  # plaintext HTTP: read from the base URL, no request sent
+    "AEGIS-API-003",  # credentials declared as URL parameters
+    "AEGIS-API-030",  # mass assignment, analysis mode
+    "AEGIS-API-031",
+}
+
+
+async def test_every_finding_from_a_real_request_carries_its_exchange(
+    vulnerable_results: list[ScanResult],
+) -> None:
+    for result in vulnerable_results:
+        if result.severity is Severity.INFORMATIONAL or result.id in _ANALYSIS_ONLY:
+            continue
+        assert result.evidence_bundle is not None, result.id
+        assert result.evidence_bundle.response["status_code"] is not None, result.id
+
+
+async def test_specification_analysis_findings_do_not_claim_an_exchange(
+    vulnerable_results: list[ScanResult],
+) -> None:
+    """A bundle asserts "this was observed". A finding read out of the spec
+    was not observed, and an empty bundle for it would be a false claim in
+    the evidence manifest."""
+    analysis = [r for r in vulnerable_results if r.id in _ANALYSIS_ONLY]
+    assert analysis
+    assert all(r.evidence_bundle is None for r in analysis)
+
+
+async def test_an_authorization_findings_evidence_withholds_the_other_partys_data(
+    vulnerable_results: list[ScanResult],
+) -> None:
+    """BOLA proves account B reached account A's object. Storing that object
+    would make the evidence bundle a copy of the records the probe only
+    established were reachable — §10's "the decision, then stop"."""
+    bola = next(r for r in vulnerable_results if r.id == "AEGIS-API-050")
+    assert bola.evidence_bundle is not None
+    body = bola.evidence_bundle.response["body"]
+    assert body.startswith("[NOT RETAINED]")
+    # And the credential that made the request is masked, not recorded.
+    assert TOKEN_B not in bola.evidence_bundle.canonical_bytes().decode()
+
+
+async def test_a_verbose_error_findings_evidence_keeps_the_body(
+    vulnerable_results: list[ScanResult],
+) -> None:
+    """The mirror image: here the body *is* the finding, so withholding it
+    would leave the finding unsupported."""
+    verbose = next(r for r in vulnerable_results if r.id == "AEGIS-API-012")
+    assert verbose.evidence_bundle is not None
+    assert not verbose.evidence_bundle.response["body"].startswith("[NOT RETAINED]")

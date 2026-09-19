@@ -13,6 +13,7 @@ from urllib.parse import urlencode
 from app.core.discovery.openapi import DiscoveredOperation, DiscoveredParameter
 from app.core.probes.api._support import (
     clip,
+    evidence_of,
     operation_url,
     surface_label,
     try_send,
@@ -100,6 +101,12 @@ class RateLimitPresenceProbe:
                     f"Send a single {operation.method} {url}.",
                     "Inspect the response headers for RateLimit/Retry-After; none present.",
                 ),
+                evidence_bundle=evidence_of(
+                    observation,
+                    probe_id=self.id,
+                    probe_version=self.version,
+                    verdict="no rate-limit or Retry-After header on the response",
+                ),
             )
         ]
 
@@ -169,6 +176,17 @@ class PaginationLimitProbe:
                         f"Send GET {url}.",
                         f"Observe HTTP {observation.status_code} rather than a 4xx or a "
                         "clamped page.",
+                    ),
+                    # No body: it is a page of the target's records, and how
+                    # large it was is already in the verdict.
+                    evidence_bundle=evidence_of(
+                        observation,
+                        probe_id=self.id,
+                        probe_version=self.version,
+                        verdict=(
+                            f"accepted {parameter.name}={_OVERSIZED_PAGE}: HTTP "
+                            f"{observation.status_code}, {len(observation.body)} bytes"
+                        ),
                     ),
                 )
             )

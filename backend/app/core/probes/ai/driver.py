@@ -6,8 +6,9 @@ claims uniform: no probe can decide for itself that one attempt was enough,
 skip its control, or apply a softer rule than the one printed in the report.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
+from app.core.evidence.bundle import EvidenceBundle, build_bundle
 from app.core.measure.asr import DEFAULT_RULE, Measurement, measure
 from app.core.probes.ai.contract import (
     AiProbe,
@@ -18,7 +19,7 @@ from app.core.probes.ai.contract import (
     TrialRecord,
     new_canary,
 )
-from app.core.probes.models import ScanResult
+from app.core.probes.models import ScanResult, Severity
 from app.core.redaction.secrets import redact
 from app.core.scope.context import RunContext
 
@@ -65,9 +66,9 @@ async def run_ai_probe(
     records: list[TrialRecord] = []
 
     control_successes, control_trials = await _run_set(
-        probe, plan.controls, ctx, ask, trials, records
+        probe, plan.controls, ctx, ask, trials, records, marker
     )
-    per_attempt = await _run_each(probe, plan.attempts, ctx, ask, trials, records)
+    per_attempt = await _run_each(probe, plan.attempts, ctx, ask, trials, records, marker)
 
     # The measurement is of the *strongest* technique, not the average of
     # them. A probe offers several framings of one idea, and pooling them
@@ -90,7 +91,61 @@ async def run_ai_probe(
         canary=marker,
         best_attempt_id=best_id,
     )
-    return probe.report(target, outcome)
+    return _with_evidence(probe.report(target, outcome), probe, target, outcome)
+
+
+def _with_evidence(
+    results: list[ScanResult],
+    probe: AiProbe,
+    target: AiProbeTarget,
+    outcome: ProbeOutcome,
+) -> list[ScanResult]:
+    """Attach the successful exchange to the results that report on it.
+
+    Built here rather than in each probe for the same reason redaction is:
+    a probe that has to remember is a probe that eventually forgets. Only
+    reportable results get one — an informational note has no exchange
+    behind it, and attaching an empty bundle would make the evidence
+    manifest claim an observation nobody made.
+    """
+    bundle = _bundle_for(probe, target, outcome)
+    if bundle is None:
+        return results
+    return [
+        replace(result, evidence_bundle=bundle)
+        if result.severity is not Severity.INFORMATIONAL
+        else result
+        for result in results
+    ]
+
+
+def _bundle_for(
+    probe: AiProbe, target: AiProbeTarget, outcome: ProbeOutcome
+) -> EvidenceBundle | None:
+    success = outcome.first_success()
+    if success is None:
+        return None
+    verdict = " — ".join(part for part in (success.reason, success.detection_evidence) if part)
+    # `method="TURN"` and no status code: this exchange went through a
+    # conversational adapter, so what is reproducible is the turn, not an
+    # HTTP request. Recording a fabricated 200 would be worse than recording
+    # nothing, because a reader would believe it.
+    return build_bundle(
+        probe_id=probe.meta.id,
+        probe_version=probe.meta.version,
+        method="TURN",
+        url=target.surface,
+        request_body=success.prompt,
+        response_body=success.response_text,
+        detector_verdict=verdict,
+        canaries=(outcome.canary,),
+        adapter={
+            "surface": target.surface,
+            "attempt_id": success.attempt_id,
+            "measured_attempt_id": outcome.best_attempt_id,
+            "trials": outcome.measurement.attack.trials,
+        },
+    )
 
 
 def _strongest(per_attempt: dict[str, tuple[int, int]]) -> tuple[str | None, int, int]:
@@ -113,11 +168,12 @@ async def _run_each(
     ask: Ask,
     trials: int,
     records: list[TrialRecord],
+    marker: str,
 ) -> dict[str, tuple[int, int]]:
     """Trials for each attempt separately, so each technique gets its own rate."""
     per_attempt: dict[str, tuple[int, int]] = {}
     for attempt in attempts:
-        successes, performed = await _run_set(probe, (attempt,), ctx, ask, trials, records)
+        successes, performed = await _run_set(probe, (attempt,), ctx, ask, trials, records, marker)
         if performed:
             per_attempt[attempt.id] = (successes, performed)
     return per_attempt
@@ -130,6 +186,7 @@ async def _run_set(
     ask: Ask,
     trials: int,
     records: list[TrialRecord],
+    marker: str,
 ) -> tuple[int, int]:
     successes = 0
     performed = 0
@@ -155,7 +212,11 @@ async def _run_set(
             # Redact here, once, rather than trusting every probe to
             # remember. A target can disclose a credential in response to
             # any prompt, not only to the probe that went looking for one.
-            safe_text = redact(response.text or "").redacted_text
+            #
+            # The marker is exempt: it is this run's own random value, and a
+            # record whose response reads `[REDACTED]` where the canary came
+            # back is evidence of nothing.
+            safe_text = redact(response.text or "", ignore=(marker,)).redacted_text
 
             records.append(
                 TrialRecord(

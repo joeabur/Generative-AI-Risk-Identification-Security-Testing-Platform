@@ -27,6 +27,8 @@ from app.core.appsec.checkout import (
 )
 from app.core.appsec.registry import appsec_engines
 from app.core.appsec.workspace import CodeScopeError
+from app.core.config import get_settings
+from app.core.evidence.store import EvidenceError, EvidenceStore
 from app.core.findings.service import promote_run_results
 from app.core.orchestrator.ai_check import AiSecurityCheck
 from app.core.orchestrator.checks import Check, Endpoint, ReachabilityCheck
@@ -103,6 +105,27 @@ async def _synthetic_accounts(db: AsyncSession, target_id: uuid.UUID) -> list[Sy
     return list(result.scalars().all())
 
 
+def _store_evidence(run_id: uuid.UUID, result: ScanResult) -> str | None:
+    """Write this result's exchange to the evidence store, if it has one.
+
+    A failure here must not lose the result. The finding is still true
+    without its bundle, and a run that threw away nine good findings because
+    the evidence directory was read-only would be a worse outcome than one
+    whose findings say "no evidence stored". The failure is logged rather
+    than swallowed silently.
+    """
+    if result.evidence_bundle is None:
+        return None
+    store = EvidenceStore(Path(get_settings().evidence_root))
+    try:
+        return store.write(str(run_id), result.evidence_bundle)
+    except (EvidenceError, OSError) as exc:
+        logger.warning(
+            "evidence.write_failed", run_id=str(run_id), probe_id=result.probe_id, error=str(exc)
+        )
+        return None
+
+
 async def _persist_scan_results(
     db: AsyncSession,
     run_id: uuid.UUID,
@@ -110,6 +133,7 @@ async def _persist_scan_results(
     results: list[ScanResult],
 ) -> None:
     for result in results:
+        evidence_ref = await asyncio.to_thread(_store_evidence, run_id, result)
         db.add(
             ScanResultRecord(
                 run_id=run_id,
@@ -131,6 +155,7 @@ async def _persist_scan_results(
                 fingerprint=result.fingerprint,
                 measurement=result.measurement,
                 stability=result.stability,
+                evidence_ref=evidence_ref,
             )
         )
     await db.commit()

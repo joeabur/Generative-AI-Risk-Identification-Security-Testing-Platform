@@ -35,6 +35,14 @@ dev = [
     "coverage>=7.6",
     "pytest-cov>=5.0",
     "types-PyYAML>=6.0",
+    "jsonschema>=4.23",
+    "types-jsonschema>=4.23",
+]
+# PDF reporting (§14). Optional because WeasyPrint needs system Pango and
+# Cairo libraries; every other report format works without it, and the PDF
+# endpoint says what is missing rather than failing obscurely.
+pdf = [
+    "weasyprint>=62",
 ]
 # The AppSec scanners. Optional at runtime by design (§15): an adapter whose
 # tool is absent reports that it did not run rather than crashing or, worse,
@@ -77,6 +85,12 @@ disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]
 module = "celery.*"
+ignore_missing_imports = true
+
+# WeasyPrint ships no py.typed marker. Optional dependency, imported in one
+# function, and its return value is narrowed at the call site.
+[[tool.mypy.overrides]]
+module = "weasyprint.*"
 ignore_missing_imports = true
 
 [tool.coverage.run]

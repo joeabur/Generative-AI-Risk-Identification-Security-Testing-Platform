@@ -695,9 +695,111 @@ Deferred out of Phase 7, with reasons:
   derivation is visible and arguable; making it editable belongs with the
   remediation workflow in Phase 9.
 
+## Phase 8 — evidence & reporting (done)
+
+Evidence bundles are content-addressed, hash-chained and redacted before they
+are written; reports render from one `ReportData` into Markdown, HTML, PDF,
+canonical JSON, SARIF 2.1.0 and CSV across four audience templates; both are
+downloadable only by a member of the owning organization, and every download
+is audited.
+
+Decisions worth stating:
+
+- **Redaction happens before serialization, and the store refuses anything
+  that got through.** `build_bundle` is the only sanctioned constructor, and
+  `EvidenceStore.write` re-scans the serialized bytes and refuses the write,
+  naming what tripped it. A bundle assembled by hand cannot be stored, so the
+  guarantee does not depend on every future caller remembering.
+- **A run's own canary is exempt from redaction.** This one was a bug the
+  end-to-end test found, and it mattered twice over. The canary is a random
+  16-hex-digit marker, so whether it happened to clear the entropy threshold
+  decided whether a run could store evidence at all — the same target
+  produced storable evidence on one run and none on the next. And redacting
+  it destroys the evidence's whole point: a marker-based finding whose record
+  reads `[REDACTED]` where the canary came back proves nothing. `find_secrets`
+  now takes an `ignore` list, claims those spans first, and the driver, the
+  bundle builder and the store all pass the run's markers through it.
+- **Word boundaries came out of the secret patterns.** The property test
+  defeated the old `\b(?:AKIA|ASIA)[0-9A-Z]{16}\b` in one line:
+  `AKIAIOSFODNN7EXAMPLE0` contains a complete AWS key id, but the trailing
+  `\b` fails against the extra character and the value passed through
+  unredacted. Adjacency must not be a way to smuggle a credential past the
+  detector, so the issuer prefixes anchor each match and the quantifiers are
+  open-ended. The cost is occasional over-redaction of a token that merely
+  starts like a key, which is the right way round.
+- **The detector's own verdict is redacted too.** Nothing guarantees a
+  detector kept only a digest; one that quoted what it saw would have put a
+  disclosed credential into the bundle by a route redaction never covered.
+- **Content addressing makes a re-write idempotent, not observations
+  interchangeable.** `created_at` is part of a bundle's content, so two
+  separate observations of an identical exchange stay two bundles. They were
+  two trials, and collapsing them would understate the measurement. Writing
+  the *same* bundle twice is one file and one chain entry.
+- **Verification checks the chain and re-hashes the files.** The chain alone
+  catches a removed or reordered entry; re-hashing catches one whose bytes
+  were edited in place. Both failures are tested by doing the tampering.
+- **The SARIF schema is the real OASIS one, vendored.** `tests/schemas/`
+  holds the 2.1.0 schema fetched from the spec repository, with a README
+  explaining why: an approximation would pass output the spec rejects, and
+  fetching it at test time makes CI depend on the network. A companion test
+  breaks the document deliberately and asserts the validator complains, so
+  "it validates" means something.
+- **Golden snapshots for every format and template.** A report is the
+  artefact that leaves the platform, so a silent change to its wording,
+  ordering or structure is a change to what an organization believes it was
+  told. `UPDATE_GOLDEN=1` re-records them and the diff has to be read.
+- **`level` is not severity, and the fingerprint travels.** SARIF has four
+  levels and this platform has five severities; critical and high both map to
+  `error`, with the Aegis score kept at full resolution in `properties`. The
+  Phase 7 fingerprint becomes `partialFingerprints`, without which a code
+  host shows every run's findings as new.
+- **Two honesty gaps the templates closed.** The developer template had no
+  coverage section, so a developer would have read a findings list with no
+  statement of what the run did not look at; framework coverage is now in
+  every template for its "not tested" half. And a finding with no measurement
+  printed no rate at all, which a reader seeing rates on the finding above it
+  could fairly read as a measured zero — it now says "not measured" and why.
+- **Reporting does not import the assistant.** The boundary test caught an
+  import of the assistant's evidence delimiters in `reporting/build.py`.
+  Stripping a prompt artefact is the assistant's job where it stores a draft,
+  not reporting's where it renders one; which sections a draft contributed is
+  read from the `ai_drafts` rows.
+- **A report is refused before the run has executed.** A document full of
+  zeroes from a queued run reads like a clean result. A report from a
+  *running* one is allowed and says so in its limitations.
+- **Evidence download needs analyst, reports need viewer.** A bundle is
+  redacted but still the closest thing kept to the raw exchange, and a
+  read-only reporting account has no need for it. Both are 404 rather than
+  403 for a non-member, and both are audited.
+
+Deferred out of Phase 8, with reasons:
+
+- **No encryption at rest.** §13 makes it optional, and a half-built
+  implementation with an undocumented key model would be worse than none — an
+  operator would believe the evidence was protected while the key sat beside
+  it. What protects a bundle today is filesystem permissions and the
+  redaction that ran before the write. `.env.example` and the compose volume
+  say so where an operator will read it.
+- **Evidence is only produced by the AI engine.** The AI driver has the whole
+  exchange, so its findings carry bundles. The API and AppSec engines record
+  their evidence as text on the result; giving them structured bundles needs
+  the request/response to survive into `ScanResult`, which is a change to
+  those engines rather than to the store. Findings without a bundle carry a
+  null `evidence_ref` rather than a reference to nothing.
+- **PDF needs an optional extra.** WeasyPrint is in a `pdf` extra because it
+  needs system Pango and Cairo; CI installs it so the path is exercised, and
+  the endpoint returns 501 with the install hint rather than a 500 when it is
+  absent.
+- **Retest results are a placeholder section.** The template has the section
+  and the renderer states that no retest has been recorded; the retest
+  workflow itself is Phase 9.
+- **No scheduled retention job.** `EvidenceStore.purge` performs a genuine
+  delete and is tested, but nothing calls it on a schedule yet — retention is
+  a policy the operator has no way to configure.
+
 ## Later phases
 
-See `docs/BUILD_SPEC.md` §26 for the full phase plan. Remaining: Phases 7–13
-(findings & risk, evidence & reporting,
-remediation & retest, CLI/CI gate, plugins, demo lab & hardening,
-documentation & release).
+See `docs/BUILD_SPEC.md` §26 for the full phase plan. Remaining: Phases 9–13
+(remediation & retest, CLI/CI gate, plugins, demo lab & hardening,
+documentation & release), plus Phase 15 (DAST), 17 (workflows, dashboard,
+CI gate) and 18 (RASP extension points).

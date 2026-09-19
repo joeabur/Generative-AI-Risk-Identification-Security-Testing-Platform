@@ -50,6 +50,11 @@ class FindingRead(BaseModel):
     mappings: dict[str, Any]
     mapping_versions: dict[str, Any]
 
+    # The digest of the bundle in the evidence store, where the run stored
+    # one. Null rather than absent: a design-review finding has no exchange
+    # behind it, and that is worth saying.
+    evidence_ref: str | None
+
     status: FindingStatus
     status_note: str | None
     first_seen: datetime

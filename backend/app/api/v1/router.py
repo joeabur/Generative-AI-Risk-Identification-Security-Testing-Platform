@@ -6,6 +6,7 @@ from app.api.v1.routers import (
     findings,
     health,
     organizations,
+    reports,
     runs,
     surface,
     targets,
@@ -18,5 +19,6 @@ api_router.include_router(organizations.router)
 api_router.include_router(targets.router)
 api_router.include_router(surface.router)
 api_router.include_router(runs.router)
+api_router.include_router(reports.router)
 api_router.include_router(findings.router)
 api_router.include_router(assistant.router)

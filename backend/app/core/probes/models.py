@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from app.core.evidence.bundle import EvidenceBundle
+
 
 class Category(StrEnum):
     AI_SECURITY = "AI_SECURITY"
@@ -75,3 +77,12 @@ class ScanResult:
     measurement: dict[str, Any] | None = None
     # Stability per §7.4: deterministic, probabilistic, or single_shot.
     stability: str | None = None
+    # The exchange behind this result, already redacted, for the evidence
+    # store to write (§13). Present only where a probe actually observed one:
+    # a design-review result has nothing to attach, and inventing an empty
+    # bundle for it would make the manifest claim an observation.
+    evidence_bundle: EvidenceBundle | None = None
+    # Where that bundle was stored. Filled when the result is read back from
+    # the database, so the findings service can carry it onto the finding
+    # without reaching into the store itself.
+    evidence_ref: str | None = None

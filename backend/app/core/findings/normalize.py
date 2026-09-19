@@ -183,5 +183,8 @@ def build_finding(
         # Empty until §3.4's ingestion runs. An unverified version string is
         # worse than none: it implies a check nobody performed.
         mapping_versions=mapping_versions or {},
-        evidence_ref=None,
+        # Whatever the run stored for this result, if anything. Never a
+        # placeholder: a finding that points at a bundle which does not exist
+        # is worse than one that admits it has none.
+        evidence_ref=result.evidence_ref,
     )

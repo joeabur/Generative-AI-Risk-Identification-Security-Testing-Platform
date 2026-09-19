@@ -64,6 +64,10 @@ class ScanResultRecord(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # the same as a measured zero.
     measurement: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     stability: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # The digest of this result's evidence bundle in the evidence store
+    # (§13). Nullable: a design-review or "not tested" result has no
+    # exchange behind it.
+    evidence_ref: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
     run: Mapped["AssessmentRun"] = relationship(back_populates="scan_results")
 
@@ -90,4 +94,5 @@ class ScanResultRecord(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             fingerprint=self.fingerprint,
             measurement=self.measurement,
             stability=self.stability,
+            evidence_ref=self.evidence_ref,
         )

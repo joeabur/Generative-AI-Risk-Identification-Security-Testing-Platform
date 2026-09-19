@@ -42,6 +42,11 @@ class Settings(BaseSettings):
         default=["http://localhost:3000"], alias="CORS_ALLOWED_ORIGINS"
     )
 
+    # Where evidence bundles and their hash-chained manifests are written
+    # (docs/BUILD_SPEC.md §13). A path, not a URL: evidence never leaves the
+    # deployment by default, and there is no public download URL for it.
+    evidence_root: str = Field(default="var/evidence", alias="EVIDENCE_ROOT")
+
     session_cookie_name: str = "aegis_session"
     session_cookie_secure: bool = Field(default=False, alias="SESSION_COOKIE_SECURE")
 

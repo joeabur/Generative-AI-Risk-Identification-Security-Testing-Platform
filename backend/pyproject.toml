@@ -56,12 +56,15 @@ appsec = [
     "detect-secrets>=1.5",
 ]
 
+[project.scripts]
+aegis-ai = "aegis_cli.main:main"
+
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["app*"]
+include = ["app*", "aegis_cli*"]
 
 [tool.ruff]
 line-length = 100

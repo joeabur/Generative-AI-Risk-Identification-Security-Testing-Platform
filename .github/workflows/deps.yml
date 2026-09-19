@@ -1,0 +1,56 @@
+# Dependency advisories (docs/BUILD_SPEC.md §23).
+#
+# Separate from `security.yml` because it fails for a different reason: not
+# "we wrote something unsafe" but "something we depend on was found unsafe",
+# which needs a different person and a different fix.
+name: deps
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "23 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install pip-audit
+      - name: pip-audit
+        # The installed set, not just the declarations, so a transitive
+        # dependency cannot hide behind a clean manifest.
+        run: |
+          pip install -e ".[dev,appsec]"
+          pip-audit --strict --progress-spinner off
+
+  node:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+      - name: npm audit
+        run: npm audit --audit-level=high

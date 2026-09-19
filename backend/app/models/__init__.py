@@ -1,4 +1,5 @@
 from app.models.ai_draft import AiDraft, DraftField
+from app.models.api_key import ApiKey, ApiKeyScope
 from app.models.api_spec import ApiSpec
 from app.models.assessment_run import (
     AssessmentRun,
@@ -21,6 +22,8 @@ from app.models.target import Target, TargetEnvironment, TargetKind
 from app.models.user import User
 
 __all__ = [
+    "ApiKeyScope",
+    "ApiKey",
     "RunKind",
     "RetestVerdict",
     "RetestResult",

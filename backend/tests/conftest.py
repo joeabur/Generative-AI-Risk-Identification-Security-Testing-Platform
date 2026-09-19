@@ -36,6 +36,7 @@ TestSessionLocal = async_sessionmaker(bind=test_engine, expire_on_commit=False, 
 
 _TABLES = [
     "ai_drafts",
+    "api_keys",
     "retest_results",
     "remediation_tasks",
     "findings",

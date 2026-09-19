@@ -28,6 +28,7 @@ async def list_findings(
     db: DbSession,
     severity: Severity | None = None,
     finding_status: FindingStatus | None = None,
+    run_id: uuid.UUID | None = None,
     membership: Membership = Depends(require_membership(Role.VIEWER)),  # noqa: B008
 ) -> list[FindingRead]:
     query = select(Finding).where(Finding.organization_id == organization_id)
@@ -35,6 +36,11 @@ async def list_findings(
         query = query.where(Finding.severity == severity)
     if finding_status is not None:
         query = query.where(Finding.status == finding_status)
+    if run_id is not None:
+        # The findings this run last saw. What a CI gate needs: "did the build
+        # I just scanned introduce something", not "what does this
+        # organization have open in total".
+        query = query.where(Finding.last_run_id == run_id)
 
     rows = await db.execute(query.order_by(Finding.risk_score.desc(), Finding.last_seen.desc()))
     return [FindingRead.model_validate(row) for row in rows.scalars().all()]

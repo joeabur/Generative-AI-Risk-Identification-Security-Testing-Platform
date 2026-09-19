@@ -11,7 +11,7 @@ engine, determinism/ASR methodology, domain model, and the phased build
 plan — lives in **[`docs/BUILD_SPEC.md`](docs/BUILD_SPEC.md)**. Read that
 first; this README is the practical "how do I run it" companion.
 
-**Current status: through Phase 9, plus Phases 14–16.** What works end to
+**Current status: through Phase 10, plus Phases 14–16.** What works end to
 end today: the scope/authorization engine and its gated transport (the single
 outbound control point), target adapters and OpenAPI discovery, run
 orchestration with cancellation and live progress, 16 API probes, 11 AI
@@ -22,9 +22,12 @@ content-addressed evidence plus reports in Markdown, HTML, PDF, JSON, SARIF
 2.1.0 and CSV, and a remediation board with a retest workflow that reports
 reproduced / not reproduced / not tested with the evidence from either side.
 
-Still to come: the CLI and CI gate (Phase 10), plugins (11), the demo lab
-(12), the release documentation (13), DAST (15), and the HTMX dashboard
-(17) — the shipped frontend is still the auth scaffold only. [`docs/roadmap.md`](docs/roadmap.md) records exactly
+There is also an `aegis-ai` CLI and a CI security gate with documented exit
+codes — see [`docs/cicd.md`](docs/cicd.md).
+
+Still to come: plugins (Phase 11), the demo lab (12), the release
+documentation (13), DAST (15), and the HTMX dashboard (17) — the shipped
+frontend is still the auth scaffold only. [`docs/roadmap.md`](docs/roadmap.md) records exactly
 what's built versus deferred, and why, phase by phase.
 
 ## Why this exists
@@ -156,6 +159,9 @@ JWT revocation. See `docs/roadmap.md` for the complete list.
   specification (mission, safety policy, architecture, domain model, probe
   catalogue, risk scoring, reporting, phased plan, definition of done).
 - [`docs/decisions/`](docs/decisions/) — architecture decision records.
+- [`docs/cicd.md`](docs/cicd.md) — the `aegis-ai` CLI, API keys, and the CI
+  security gate: its exit codes, and why it refuses to fail a build on an
+  unstable finding.
 - [`docs/roadmap.md`](docs/roadmap.md) — what's built, what's deferred, and
   why.
 

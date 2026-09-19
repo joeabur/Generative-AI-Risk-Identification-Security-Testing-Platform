@@ -901,9 +901,106 @@ Deferred out of Phase 9, with reasons:
   both bundles and compare them; the platform does not render a structured
   difference between them.
 
+## Phase 10 — CLI, API keys & CI/CD gate (done)
+
+`aegis-ai` exists as a console script, organizations can mint scoped API keys
+for CI, and `aegis-ai gate` / `aegis-ai ci` fail a build on a seeded critical
+finding with the documented exit code.
+
+Decisions worth stating:
+
+- **The CLI is its own package, and a test enforces it.** §26 Phase 10
+  requires the CLI to exercise the same API and scope engine as the UI rather
+  than a weaker path of its own, and the strongest way to guarantee that is
+  structural: `aegis_cli/` may import `app.core.gate` (pure logic over
+  findings the API returned) and the shared enums, and nothing else from
+  `app.core`. It holds no scope engine, no probe, no adapter and no database
+  session, so the only way it can reach a target is to ask the API to — which
+  means every request it causes passes the same authorization gate a browser
+  session does. `tests/test_cli.py` asserts that rather than trusting it.
+- **`--safe` is passed to the API, not honoured by the CLI.** A flag the
+  client enforced by itself would be a second, weaker gate, and the one that
+  matters would be the one nobody was looking at.
+- **An API key cannot grant authorization.** Its scopes top out at security
+  engineer, so it cannot create a target, amend an authorization, add a
+  member, or mint another key. A credential living in a CI runner is the most
+  exposed thing this platform issues, and the authorization grant is the
+  human act that makes a scan lawful. A test mints an owner's key and proves
+  all four are refused — without the role cap, every key an owner created
+  would have been an owner key.
+- **A key's authority is its scopes; the role is derived.** One source of
+  truth. Carrying both a scope list and a role invites the two to disagree,
+  and then nobody can say which the platform enforces.
+- **The secret is SHA-256, not Argon2.** It is 256 bits of CSPRNG output, so
+  there is nothing to brute-force; a deliberately slow KDF on every CI request
+  would buy latency and no security. A password is the opposite case, which is
+  why `app/auth/security.py` still uses Argon2id for those.
+- **The gate refuses to fail a build on a single-shot finding.** §23 names the
+  failure mode plainly — gating on unstable, low-confidence AI findings makes
+  pipelines flaky and gets the tool switched off by the first adopting team —
+  so `require_stability` defaults to deterministic and probabilistic only.
+  Low-confidence, design-review and already-triaged findings are excluded for
+  the same reason. Gating on single-shot results is possible, but has to be
+  asked for.
+- **Every exclusion is printed with its reason.** A gate that says "failed: 3
+  findings" teaches people to add `|| true`; one that shows what it skipped
+  and why is one they can argue with, and arguing with it is how it stays
+  switched on.
+- **An unknown setting in `security-gate.yaml` is an error.** A typo'd
+  `max_hihg: 0` that silently did nothing would leave a team believing they
+  had a gate they did not have.
+- **`fail_on` is a threshold, not a set.** `[high]` also fails on critical: a
+  gate that let a critical through because the list said "high" would be
+  indefensible.
+- **A refusal never exits 0.** Authentication problems exit 3, a scope refusal
+  or a halted run exits 4, a bad configuration exits 2 — and only a real
+  finding exits 1. Reporting "no findings" because the tool could not
+  authenticate would be worse than having no gate.
+- **`ci` gates on the run it started**, not on the organization's backlog,
+  which would fail one team's build for another team's open finding.
+
+Two bugs the tests caught, both about the gate saying something it did not
+mean:
+
+- `max_high: null` was being read as "use the default of 0", because the
+  parser could not tell an explicit null from an absent key. The documented
+  example uses null to mean "no limit", so the parser now distinguishes them.
+- The gate initially matched `fail_on` exactly, so a config listing `high`
+  would have passed a critical.
+
+Deferred out of Phase 10, with reasons:
+
+- **Four of the nine §23 workflows are absent, not stubbed.** `container.yml`
+  needs images this repository does not yet build in CI, `lab-e2e.yml` needs
+  the Phase 12 demo lab, `release.yml` needs the Phase 13 release process, and
+  `framework-drift.yml` needs the pinned framework corpus from §3.4 that
+  `mapping_versions` is still empty for. A workflow that exists and does
+  nothing is worse than one that is honestly missing.
+- **detect-secrets runs against a committed baseline.** A bare scan of this
+  repository is red on day one — 31 files of migration revision hashes,
+  environment-variable *names*, and the credentials the vulnerable lab fixture
+  contains deliberately — and a job that is red from the start gets disabled
+  rather than fixed. The baseline stores hashes, not values, and the step
+  fails on anything new (verified by planting an AWS key and watching it
+  fail). Running the CI steps locally before committing the workflow is what
+  surfaced this; it also surfaced that the platform's own Semgrep rule fires
+  on the gated transport and on the CLI's API client, both now suppressed at
+  the line with a stated reason rather than by excluding the files.
+- **Actions are pinned to tags, not SHAs.** §23 asks for SHAs; the existing
+  `ci.yml` pins tags and changing that convention is a repository-wide edit
+  that belongs with the Phase 12 supply-chain work.
+- **Some §20 commands are absent rather than stubbed**: `init`, `test --probe`,
+  `replay`, `frameworks`, `probes list` and `evidence purge`. Each needs an
+  endpoint the platform does not have yet, and a command printing "not
+  implemented" is still a command people script against — `aegis-ai probes
+  list` returning nothing would read as "this build has no probes".
+- **No OIDC.** §21 lists API-key *or* OIDC authentication; only the first is
+  built.
+- **No rate limiting on authentication endpoints**, which §21 also asks for
+  and which remains the oldest open item on this list.
+
 ## Later phases
 
-See `docs/BUILD_SPEC.md` §26 for the full phase plan. Remaining: Phases 10–13
-(CLI/CI gate, plugins, demo lab & hardening, documentation & release), plus
-Phase 15 (DAST), 17 (workflows, dashboard, CI gate) and 18 (RASP extension
-points).
+See `docs/BUILD_SPEC.md` §26 for the full phase plan. Remaining: Phases 11–13
+(plugins, demo lab & hardening, documentation & release), plus Phase 15
+(DAST), 17 (workflows, dashboard) and 18 (RASP extension points).

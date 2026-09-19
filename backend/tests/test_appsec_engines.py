@@ -22,9 +22,10 @@ from app.core.appsec.identifiers import (
 )
 from app.core.appsec.registry import appsec_engines
 from app.core.appsec.sast.semgrep_engine import SemgrepEngine
+from app.core.appsec.secrets.gitleaks_engine import GitleaksEngine, report_path
 from app.core.appsec.tooling import tool_available
 from app.core.appsec.workspace import CodeScope, CodeScopeError, resolve_workspace
-from app.core.probes.models import ScanResult, Severity
+from app.core.probes.models import Confidence, ScanResult, Severity
 
 REPOS = Path(__file__).parent / "lab" / "repos"
 SCOPE = CodeScope(allowed_paths=("src/**", "infra/**", "requirements.txt"))
@@ -515,3 +516,111 @@ async def test_a_secret_findings_bundle_does_not_republish_the_secret(
         payload = result.evidence_bundle.canonical_bytes().decode()
         assert "AKIA" not in payload or "AKIA****" in payload
         assert "aegis-dev-only" not in payload
+
+
+# --- gitleaks (Phase 11's third tool adapter) -----------------------------
+
+GITLEAKS_REPORT = [
+    {
+        "RuleID": "aws-access-token",
+        "Description": "AWS Access Key",
+        "File": "src/app.py",
+        "StartLine": 10,
+        "Commit": "9f1c2d3e4a5b6c7d8e9f0a1b2c3d4e5f60718293",
+        "Author": "A Developer",
+        "Date": "2026-02-11T09:14:00Z",
+        # A real-looking value on purpose. Gitleaks `--redact` would have
+        # replaced it, but the adapter must not depend on a flag staying set in
+        # a future release, so the unredacted path is what gets tested.
+        "Secret": "AKIAIOSFODNN7EXAMPLE",
+        "Match": "aws_key = AKIAIOSFODNN7EXAMPLE",
+    },
+    {
+        "RuleID": "generic-api-key",
+        "Description": "Generic API Key",
+        "File": "src/app.py",
+        "StartLine": 42,
+        "Commit": "",
+        "Secret": "s3cret-in-the-working-tree",
+    },
+    {
+        # Outside the workspace: dropped, like every other engine's output.
+        "RuleID": "aws-access-token",
+        "File": "/etc/shadow",
+        "StartLine": 1,
+        "Commit": "abc",
+    },
+    {
+        # No rule id: cannot be fingerprinted or traced upstream.
+        "RuleID": "",
+        "File": "src/app.py",
+        "StartLine": 3,
+    },
+]
+
+
+def test_gitleaks_output_normalizes_without_keeping_the_value() -> None:
+    """The adapter's whole job. Gitleaks prints the match; a findings table
+    that stores credentials is a credential store nobody secured."""
+    engine = GitleaksEngine()
+    workspace = _workspace("vulnerable")
+
+    findings = engine.parse(GITLEAKS_REPORT, workspace)
+
+    assert [f.endpoint for f in findings] == ["src/app.py:10", "src/app.py:42"]
+    leaked = ("AKIAIOSFODNN7EXAMPLE", "s3cret-in-the-working-tree")
+    for finding in findings:
+        assert "sha256=" in finding.evidence
+        assert finding.fingerprint is not None
+        assert finding.evidence_bundle is not None
+        serialized = finding.evidence_bundle.canonical_bytes().decode()
+        for value in leaked:
+            assert value not in finding.evidence
+            assert value not in finding.description
+            assert value not in serialized
+
+
+def test_a_history_only_secret_says_that_removing_the_line_is_not_enough() -> None:
+    findings = GitleaksEngine().parse(GITLEAKS_REPORT, _workspace("vulnerable"))
+    historical = findings[0]
+
+    assert historical.severity is Severity.CRITICAL
+    assert "9f1c2d3e4a5b" in historical.description
+    assert "does not remove it" in historical.description
+    assert "Rotate the credential first" in historical.remediation
+
+
+def test_a_shape_matched_secret_is_reported_lower_not_suppressed() -> None:
+    """It fires on test fixtures and checksums as well as real credentials.
+    Suppressing the rule would hide the one that is real."""
+    generic = GitleaksEngine().parse(GITLEAKS_REPORT, _workspace("vulnerable"))[1]
+
+    assert generic.severity is Severity.MEDIUM
+    assert generic.confidence is Confidence.MEDIUM
+    assert "fires on test fixtures" in generic.description
+
+
+def test_gitleaks_only_applies_where_there_is_history_to_read() -> None:
+    """Against a plain directory it would add nothing the working-tree engine
+    does not already cover."""
+    assert not GitleaksEngine().applies_to(_workspace("vulnerable"))
+
+
+async def test_gitleaks_reports_a_gap_when_the_tool_is_absent(tmp_path: Path) -> None:
+    """§15's graceful degradation: a missing scanner produces a visible gap,
+    never an empty result set that reads as "nothing found"."""
+    (tmp_path / ".git").mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("x = 1\n", encoding="utf-8")
+    workspace = resolve_workspace(tmp_path, CodeScope(allowed_paths=("src/**",)))
+
+    engine = GitleaksEngine()
+    assert engine.applies_to(workspace)
+
+    results = await engine.run(workspace)
+
+    assert len(results) == 1
+    assert results[0].id == "AEGIS-APPSEC-000"
+    assert results[0].severity is Severity.INFORMATIONAL
+    # And the report file it would have written is not left behind.
+    assert not report_path(workspace).exists()

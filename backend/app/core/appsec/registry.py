@@ -10,6 +10,7 @@ from app.core.appsec.sast.bandit_engine import BanditEngine
 from app.core.appsec.sast.semgrep_engine import SemgrepEngine
 from app.core.appsec.sca.pip_audit_engine import PipAuditEngine
 from app.core.appsec.secrets.engine import SecretScanEngine
+from app.core.appsec.secrets.gitleaks_engine import GitleaksEngine
 
 
 def appsec_engines(*, allow_advisory_lookup: bool = False) -> list[AppSecEngine]:
@@ -18,5 +19,9 @@ def appsec_engines(*, allow_advisory_lookup: bool = False) -> list[AppSecEngine]
         BanditEngine(),
         PipAuditEngine(allow_advisory_lookup=allow_advisory_lookup),
         SecretScanEngine(),
+        # Two secrets engines on purpose: the one above reads the working tree,
+        # this one reads the git history. A credential removed in a later commit
+        # is still in the history, and one that was ever pushed is compromised.
+        GitleaksEngine(),
         CheckovEngine(),
     ]

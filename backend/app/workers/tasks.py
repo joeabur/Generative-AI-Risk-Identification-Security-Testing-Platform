@@ -40,6 +40,7 @@ from app.core.orchestrator.context_builder import (
     build_run_context,
     build_workspace,
 )
+from app.core.orchestrator.plugin_check import PluginCheck
 from app.core.orchestrator.probe_check import ProbeCheck
 from app.core.orchestrator.runner import RunEventPayload, execute_run
 from app.core.probes.api.registry import build_api_registry
@@ -61,6 +62,9 @@ from app.models.scan_result import ScanResultRecord
 from app.models.surface_endpoint import SurfaceEndpoint
 from app.models.synthetic_account import SyntheticAccount
 from app.models.target import Target
+from app.plugins.allowlist import policy_from_settings
+from app.plugins.contract import PluginKind
+from app.plugins.registry import discover
 from app.workers.cancellation import is_cancellation_requested
 from app.workers.celery_app import celery_app
 
@@ -256,6 +260,31 @@ async def execute_assessment_run(
                     {"reason": str(exc)},
                 )
 
+        # Third-party probe plugins, if an operator allowlisted any. The banner
+        # goes into the run's own event log as well as the worker log, so the
+        # report's provenance is reconstructable from the run rather than from
+        # whichever worker happened to pick it up.
+        plugin_check: PluginCheck | None = None
+        discovery = discover(policy_from_settings())
+        logger.info("plugins.discovered", banner=discovery.banner())
+        probe_plugins = discovery.of_kind(PluginKind.PROBE)
+        # Only when something was actually found: a deployment that runs no
+        # plugins must not file an event on every run saying so.
+        if discovery.loaded or discovery.refused:
+            await _record_event(
+                db,
+                run.id,
+                RunEventKind.CHECK_COMPLETED,
+                discovery.banner().replace("\n", " | ")[:1000],
+                {
+                    "loaded": [record.describe() for record in discovery.loaded],
+                    "refused": list(discovery.refused),
+                },
+            )
+        if probe_plugins:
+            plugin_check = PluginCheck(plugins=probe_plugins, probe_target=probe_target)
+            checks.append(plugin_check)
+
         run.status = RunStatus.RUNNING
         run.started_at = datetime.now(UTC)
         run.checks_total = len(checks)
@@ -294,6 +323,8 @@ async def execute_assessment_run(
             all_results.extend(ai_check.scan_results)
         if code_check is not None:
             all_results.extend(code_check.scan_results)
+        if plugin_check is not None:
+            all_results.extend(plugin_check.scan_results)
         await _persist_scan_results(db, run.id, run.organization_id, all_results)
 
         # Promote this run's results into persistent findings. Done after

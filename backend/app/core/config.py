@@ -47,6 +47,15 @@ class Settings(BaseSettings):
     # deployment by default, and there is no public download URL for it.
     evidence_root: str = Field(default="var/evidence", alias="EVIDENCE_ROOT")
 
+    # --- plugins (docs/BUILD_SPEC.md §16) ---------------------------------
+    # Off unless an operator points at a configuration file that names the
+    # packages allowed to load. `pip install` must not be what decides which
+    # code runs inside the scope engine's process. `AEGIS_NO_PLUGINS=1` is the
+    # `--no-plugins` switch: it wins over any configuration, so there is always
+    # one thing to set when something has gone wrong.
+    plugins_config: str | None = Field(default=None, alias="PLUGINS_CONFIG")
+    no_plugins: bool = Field(default=False, alias="AEGIS_NO_PLUGINS")
+
     session_cookie_name: str = "aegis_session"
     session_cookie_secure: bool = Field(default=False, alias="SESSION_COOKIE_SECURE")
 

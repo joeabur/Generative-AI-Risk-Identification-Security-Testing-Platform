@@ -999,8 +999,97 @@ Deferred out of Phase 10, with reasons:
 - **No rate limiting on authentication endpoints**, which §21 also asks for
   and which remains the oldest open item on this list.
 
+## Phase 11 — plugins & third-party adapters (done)
+
+Entry-point discovery across the four §16 groups, an allowlist that is off
+until an operator turns it on, a third tool adapter, and
+`docs/plugin-development.md` whose example is the code the test suite actually
+runs.
+
+Decisions worth stating:
+
+- **No sandbox is claimed, anywhere.** §16 says so and every file that touches
+  plugins repeats it: a plugin is Python running in the worker process and can
+  do anything a dependency can. Pretending otherwise would be the single most
+  dangerous thing this subsystem could say, because an operator who believes a
+  plugin is contained will install one they have not read.
+- **What *is* guaranteed is narrower and checkable.** Nothing loads unless a
+  package is named in `plugins.allowlist`; the contract hands a plugin a
+  `RunContext` and a `GatedTransport` and no attribute on either yields a raw
+  client; and bad metadata is refused at load. The scope claim is tested three
+  ways — structurally (nothing reachable from the contract is an httpx
+  client), behaviourally (a plugin pointed at an out-of-scope host gets
+  nothing, and the mocked route is never called), and on budget (a plugin's
+  requests are counted, so a one-request budget stops the second).
+- **Discovery is off by default.** `pip install` must not be what decides which
+  code runs inside the scope engine's process, so the policy loads nothing
+  until `PLUGINS_CONFIG` points at a file that names packages.
+  `AEGIS_NO_PLUGINS=1` wins over everything: when something has gone wrong
+  there should be exactly one thing to set.
+- **A hash pin means "this build".** It is a digest over the installed
+  distribution's `RECORD`, so a package silently replaced after it was pinned
+  is refused. A name-only entry is weaker and allowed, because forcing
+  operators to produce hashes they do not have would get them fabricated.
+- **Attribution is not the plugin's to set.** `probe_id` and `probe_version`
+  are overwritten with the plugin's own id and installed version, and any
+  `evidence_bundle` it supplies is discarded. A plugin filing findings under
+  `ai.injection.direct.instruction_override` would have an operator drawing
+  conclusions about code that never ran; a bundle from a plugin came from
+  somewhere the platform cannot vouch for. Both have tests that try it.
+- **Every run that loads a plugin says so** — a banner in the run's own event
+  log and an informational `AEGIS-PLUGIN-900` result naming what loaded. §14's
+  coverage honesty cuts both ways: silence about a plugin is as misleading as
+  silence about an untested area.
+- **One bad plugin does not lose the run.** An import that raises, a
+  constructor that throws, a `run` that explodes — each becomes a recorded gap
+  and the rest still run, the same principle the orchestrator already applies
+  to probes.
+- **Policy notes are kept apart from plugin refusals.** The first version put
+  "discovery is off, no config set" into the refusal list, which meant every
+  run on every deployment filed an event announcing that it ran no plugins.
+  Refusals are per-plugin and belong in a run's history; the policy's own state
+  belongs in the log.
+- **Gitleaks is the third adapter, and it is not a duplicate of the secrets
+  engine.** The built-in one reads the working tree, which is what an operator
+  can fix today; gitleaks reads the git history, where a credential removed in
+  a later commit still sits. A secret that was ever pushed is compromised, so
+  the finding only gitleaks can see is the one that matters most. It passes
+  `--redact`, and then hashes whatever arrives anyway rather than trusting a
+  flag to stay set in a future release, and it deletes its own report file in a
+  `finally` — that file lists where every credential is.
+
+Deferred out of Phase 11, with reasons:
+
+- **Only `aegis.probes` is consumed.** All four groups are discovered,
+  validated and listed in the banner, but nothing yet runs a third-party
+  detector, adapter or reporter: each needs a contract of its own (a detector
+  needs the observation shape, a reporter needs the template API), and
+  inventing three more contracts to leave unused would be worse than saying
+  this.
+- **No signature verification.** §16 says "signed/allowlist mode"; the
+  allowlist half is built, with an optional hash pin. Sigstore verification
+  belongs with the Phase 12 supply-chain work that also signs this project's
+  own releases.
+- **Gitleaks is untested against the real binary here.** It is a Go binary that
+  is not installed in this environment, so the adapter's normalizer is tested
+  against a recorded report and the absent-tool path is tested for real. That
+  is the same position the other tool adapters were in before CI installed
+  them.
+- **The secrets baseline was wrong when Phase 10 shipped, and is fixed here.**
+  It was generated from `git ls-files` before the Phase 10 files were tracked,
+  so `aegis_cli/config.py` (an environment-variable *name*) and the api-keys
+  migration's revision hashes were never recorded — `security.yml` would have
+  been red on the commit that introduced it. Running the job locally after each
+  change is what caught it, and is now the habit: a CI job is not done when it
+  is written, it is done when it has been seen to pass on the tree it will run
+  against.
+- **`--no-plugins` is a deployment switch, not a per-run flag.** Disabling
+  plugins for one run would mean carrying the choice on the run row and through
+  the worker; it is not clear anyone wants that, and guessing would add a
+  column that has to be maintained forever.
+
 ## Later phases
 
-See `docs/BUILD_SPEC.md` §26 for the full phase plan. Remaining: Phases 11–13
-(plugins, demo lab & hardening, documentation & release), plus Phase 15
-(DAST), 17 (workflows, dashboard) and 18 (RASP extension points).
+See `docs/BUILD_SPEC.md` §26 for the full phase plan. Remaining: Phases 12–13
+(demo lab & hardening, documentation & release), plus Phase 15 (DAST), 17
+(workflows, dashboard) and 18 (RASP extension points).

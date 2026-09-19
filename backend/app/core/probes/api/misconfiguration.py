@@ -9,6 +9,7 @@ from app.core.discovery.openapi import DiscoveredOperation
 from app.core.probes.api._support import (
     body_text,
     clip,
+    evidence_of,
     operation_url,
     surface_label,
     try_send,
@@ -132,6 +133,12 @@ class SecurityHeadersProbe:
                     f"Send {operation.method} {url}.",
                     f"Inspect the response headers and note that {', '.join(missing)} are absent.",
                 ),
+                evidence_bundle=evidence_of(
+                    observation,
+                    probe_id=self.id,
+                    probe_version=self.version,
+                    verdict=f"missing: {', '.join(missing)}",
+                ),
             )
         ]
 
@@ -225,6 +232,16 @@ class CorsPolicyProbe:
                     f"Send {operation.method} {url} with Origin: {self.PROBE_ORIGIN}.",
                     f"Observe Access-Control-Allow-Origin: {allow_origin} in the response.",
                 ),
+                evidence_bundle=evidence_of(
+                    observation,
+                    probe_id=self.id,
+                    probe_version=self.version,
+                    request_headers={"Origin": self.PROBE_ORIGIN},
+                    verdict=(
+                        f"Access-Control-Allow-Origin: {allow_origin}; "
+                        f"Allow-Credentials: {allow_credentials or '(absent)'}"
+                    ),
+                ),
             )
         ]
 
@@ -292,6 +309,15 @@ class VerboseErrorProbe:
                     f"Send {operation.method} {url}.",
                     f"Observe HTTP {observation.status_code} with {marker!r} in the body.",
                 ),
+                # Here the body is the finding — a stack trace is the thing
+                # being reported — so it is retained, redacted.
+                evidence_bundle=evidence_of(
+                    observation,
+                    probe_id=self.id,
+                    probe_version=self.version,
+                    verdict=f"framework internals matched {marker!r}",
+                    include_body=True,
+                ),
             )
         ]
 
@@ -354,6 +380,19 @@ class DebugEndpointProbe:
                     reproduction=(
                         f"Send GET {url}.",
                         f"Observe HTTP {observation.status_code} rather than 404.",
+                    ),
+                    # No body, deliberately. A reachable /.env often contains
+                    # credentials outright; that it answered at all is the
+                    # finding, and copying its contents into the evidence
+                    # store would spread the exposure rather than record it.
+                    evidence_bundle=evidence_of(
+                        observation,
+                        probe_id=self.id,
+                        probe_version=self.version,
+                        verdict=(
+                            f"{path} answered HTTP {observation.status_code} with "
+                            f"{len(observation.body)} bytes"
+                        ),
                     ),
                 )
             )

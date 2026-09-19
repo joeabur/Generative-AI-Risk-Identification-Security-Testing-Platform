@@ -29,7 +29,7 @@ from app.core.reporting.render import (
 )
 from app.core.reporting.sarif import SARIF_VERSION, to_sarif, to_sarif_json
 from app.core.reporting.templates import Section, Template, sections_for, shows_probe_ids
-from tests.reporting_fixtures import sample_report
+from tests.reporting_fixtures import retest_report, sample_report
 
 GOLDEN_DIR = pathlib.Path(__file__).parent / "golden"
 SCHEMA_PATH = pathlib.Path(__file__).parent / "schemas" / "sarif-schema-2.1.0.json"
@@ -201,3 +201,25 @@ def test_pdf_is_produced_from_the_html() -> None:
         pytest.skip(f"WeasyPrint not installed: {exc}")
     assert document.startswith(b"%PDF-")
     assert len(document) > 1000
+
+
+# --- retest rendering (Phase 9) -------------------------------------------
+
+
+def test_retest_snapshot() -> None:
+    assert_golden("report-retest.md", render_markdown(retest_report(), Template.TECHNICAL))
+
+
+def test_a_retest_report_never_presents_not_tested_as_good_news() -> None:
+    """The verdict that keeps the other two honest has to survive rendering."""
+    rendered = render_markdown(retest_report(), Template.TECHNICAL)
+    assert "**Not** evidence of a fix" in rendered
+    assert "Not looking is not a fix" in rendered
+    assert "Evidence of a fix" in rendered  # not_reproduced, stated separately
+
+
+def test_an_assessment_does_not_claim_to_be_a_retest() -> None:
+    """Recurrence is a weaker claim than a verdict, and is labelled as one."""
+    rendered = render_markdown(sample_report(), Template.TECHNICAL)
+    assert "was an assessment, not a retest" in rendered
+    assert "reproduced" not in rendered.split("## Retest results")[1].split("## Appendix")[0]

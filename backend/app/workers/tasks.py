@@ -44,11 +44,19 @@ from app.core.orchestrator.probe_check import ProbeCheck
 from app.core.orchestrator.runner import RunEventPayload, execute_run
 from app.core.probes.api.registry import build_api_registry
 from app.core.probes.models import ScanResult, Severity
+from app.core.retest.service import record_retest
 from app.core.scope.errors import AuthorizationRequiredError, RoEValidationError
 from app.core.scope.kill_switch import KillSwitch
 from app.core.scope.transport import GatedTransport
 from app.db.session import dispose_engine, get_session_factory
-from app.models.assessment_run import AssessmentRun, RunEvent, RunEventKind, RunStatus
+from app.models.assessment_run import (
+    AssessmentRun,
+    RunEvent,
+    RunEventKind,
+    RunKind,
+    RunStatus,
+)
+from app.models.retest import RetestVerdict
 from app.models.scan_result import ScanResultRecord
 from app.models.surface_endpoint import SurfaceEndpoint
 from app.models.synthetic_account import SyntheticAccount
@@ -302,9 +310,29 @@ async def execute_assessment_run(
         run.checks_completed = outcome.checks_completed
         run.requests_blocked = outcome.requests_blocked
         run.requests_used = len(outcome.results)
+        # The record a retest needs: every probe or engine that actually got
+        # to run, whether or not it reported anything.
+        run.probes_executed = sorted({item.surface for item in outcome.results if item.ok})
         run.halted_reason = outcome.halted_reason
         run.error_message = outcome.error_message
         run.finished_at = datetime.now(UTC)
+
+        # A retest's verdicts come last, after promotion has decided which
+        # findings this run saw again. `halted_reason` is already set above,
+        # which is what lets the comparison say "not tested" rather than
+        # reading a cut-short run as a fix.
+        if run.kind is RunKind.RETEST:
+            verdicts = await record_retest(db, run=run)
+            logger.info(
+                "retest_recorded",
+                run_id=str(run_id),
+                reproduced=sum(1 for v in verdicts if v.verdict is RetestVerdict.REPRODUCED),
+                not_reproduced=sum(
+                    1 for v in verdicts if v.verdict is RetestVerdict.NOT_REPRODUCED
+                ),
+                not_tested=sum(1 for v in verdicts if v.verdict is RetestVerdict.NOT_TESTED),
+            )
+
         await db.commit()
 
         logger.info(

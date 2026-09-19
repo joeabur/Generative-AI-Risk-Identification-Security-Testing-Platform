@@ -21,7 +21,7 @@ import hashlib
 import json
 from typing import Any
 
-from app.core.appsec.contract import EngineMeta, Pillar, tool_unavailable
+from app.core.appsec.contract import EngineMeta, Pillar, code_evidence, tool_unavailable
 from app.core.appsec.identifiers import verified_advisories
 from app.core.appsec.tooling import NetworkUse, ToolInvocation, run_tool
 from app.core.appsec.workspace import Workspace
@@ -181,6 +181,20 @@ class PipAuditEngine:
                         # not present as a brand new issue.
                         fingerprint="sha256:"
                         + hashlib.sha256(f"{primary}|{manifest}|{name}".encode()).hexdigest(),
+                        # A dependency finding's "span" is the manifest entry
+                        # that pinned the affected version, which is what a
+                        # retest re-reads after an upgrade.
+                        evidence_bundle=code_evidence(
+                            self.meta,
+                            rule_id=primary,
+                            relative_path=manifest,
+                            line=None,
+                            snippet=f"{name}=={installed}",
+                            message=(
+                                f"{primary} affects {name} {installed}"
+                                + (f"; fixed in {', '.join(fixes)}" if fixes else "")
+                            ),
+                        ),
                     )
                 )
         return findings

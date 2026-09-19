@@ -55,6 +55,11 @@ class FindingRead(BaseModel):
     # behind it, and that is worth saying.
     evidence_ref: str | None
 
+    # The latest retest verdict, so a board can show "was this actually
+    # fixed?" without a second request. Null until a retest has looked.
+    retest_result: str | None
+    last_retest_run_id: uuid.UUID | None
+
     status: FindingStatus
     status_note: str | None
     first_seen: datetime

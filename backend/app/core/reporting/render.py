@@ -362,17 +362,23 @@ def _remediation_plan(report: ReportData, show_probes: bool) -> list[str]:
 def _retest_results(report: ReportData) -> list[str]:
     """Deltas by fingerprint.
 
-    `times_seen` is what makes this possible: a finding seen once is new
-    since the last assessment, and one seen repeatedly has survived them.
-    A full previous-run comparison arrives with the retest workflow in
-    Phase 9, and this section says so rather than implying more.
+    A retest run states a verdict per finding, with the evidence digest from
+    before and after. An ordinary assessment has no verdicts, and reports
+    recurrence instead — which is a weaker claim, so it is labelled as one.
     """
-    recurring = [f for f in report.findings if f.times_seen > 1]
     out = ["## Retest results", ""]
+    if report.is_retest:
+        return out + _retest_verdicts(report)
+
+    recurring = [f for f in report.findings if f.times_seen > 1]
     if not report.findings:
         out += ["No findings to compare.", ""]
         return out
     out += [
+        "This run was an assessment, not a retest, so nothing here is a "
+        "verdict on whether a specific weakness was fixed. What it can say is "
+        "which findings have survived more than one run.",
+        "",
         f"- New in this run: {len(report.findings) - len(recurring)}",
         f"- Seen in a previous run and still present: {len(recurring)}",
         "",
@@ -380,11 +386,49 @@ def _retest_results(report: ReportData) -> list[str]:
     if recurring:
         out += [f"- `{f.fingerprint[:19]}…` {f.title} (seen {f.times_seen}x)" for f in recurring]
         out += [""]
-    out += [
-        "Comparison is by fingerprint, which is stable across runs. A full "
-        "before/after evidence comparison arrives with the retest workflow.",
+    return out
+
+
+def _retest_verdicts(report: ReportData) -> list[str]:
+    """The three verdicts, counted and then listed.
+
+    `not tested` is reported as loudly as the other two. A retest whose probe
+    did not run tells you nothing about a fix, and a report that folded those
+    rows into "not reproduced" would be claiming the opposite.
+    """
+    if not report.retests:
+        return [
+            "This run was a retest, but no findings were compared — the baseline was empty.",
+            "",
+        ]
+
+    counts: dict[str, int] = {}
+    for record in report.retests:
+        counts[record.verdict] = counts.get(record.verdict, 0) + 1
+
+    out = [
+        "| Verdict | Count | Means |",
+        "|---|---|---|",
+        f"| reproduced | {counts.get('reproduced', 0)} | Found again. Still present. |",
+        f"| not_reproduced | {counts.get('not_reproduced', 0)} | "
+        "The probe ran and found nothing. Evidence of a fix. |",
+        f"| not_tested | {counts.get('not_tested', 0)} | "
+        "The probe did not run. **Not** evidence of a fix. |",
         "",
     ]
+    for record in report.retests:
+        out += [
+            f"#### {record.title}",
+            "",
+            f"- Verdict: **{record.verdict}**",
+            f"- Severity at baseline: {record.severity}",
+            f"- Fingerprint: `{record.fingerprint}`",
+            f"- Evidence before: `{record.before_evidence_ref or 'none recorded'}`",
+            f"- Evidence after: `{record.after_evidence_ref or 'none — nothing was observed'}`",
+            "",
+            record.detail,
+            "",
+        ]
     return out
 
 

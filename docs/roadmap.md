@@ -797,9 +797,113 @@ Deferred out of Phase 8, with reasons:
   delete and is tested, but nothing calls it on a schedule yet — retention is
   a policy the operator has no way to configure.
 
+## Engine completion pass (done)
+
+Prompted by a review of what the engine actually produced end to end, not by
+a phase boundary. Three real defects came out of it.
+
+- **The `Observation` → evidence bundle pipeline finally exists.** The gated
+  transport's own docstring had promised it since Phase 2 and it was never
+  built, so only the AI engine's findings carried downloadable evidence. API
+  probe findings now carry the exchange behind them, and the AppSec engines
+  carry the tool, rule and code span. 14 of the 17 findings the vulnerable lab
+  produces now have verifiable evidence; the other three are read out of the
+  specification and carry none *on purpose* — a bundle asserts "this was
+  observed", and a finding nobody observed must not claim one. A test names
+  those three, so a new probe cannot quietly join them.
+- **Evidence withholds the other party's data where that is the finding.**
+  A BOLA probe establishes that account B reached account A's object; storing
+  that object would turn the evidence bundle into a copy of the records the
+  probe was only supposed to prove were reachable. Bundles therefore default
+  to *not* retaining the response body, and a caller opts in where the body
+  *is* the finding — a stack trace, an echoed marker, a GraphQL schema. Both
+  directions are tested.
+- **`uri.lstrip("./")` leaked the checkout directory into every semgrep
+  finding.** `lstrip` strips characters, not a prefix: `./src/app.py` became
+  `src/app.py` as intended, and
+  `/home/runner/checkout-a1b2/src/app.py` became
+  `home/runner/checkout-a1b2/src/app.py`. The path is part of the §11
+  fingerprint and a checkout directory is unique per run, so every static
+  finding got a new identity on every scan — no dedup, no history, no "is this
+  still there?" — and the worker's filesystem layout went into
+  customer-facing reports. Now one shared `relative_to_workspace` resolves
+  against the workspace and drops anything outside it, with a regression test
+  that scans the same file from two checkout directories and asserts one
+  fingerprint.
+
+The audit also confirmed what was already right: the vulnerable lab yields 17
+API findings and 23 static ones, the hardened control yields zero and zero
+reportable, and all 17 API findings have distinct fingerprints.
+
+## Phase 9 — remediation & retest (done)
+
+A finding can be assigned with a due date, moved through the §11 lifecycle,
+retested, and shown as reproduced or not reproduced with the evidence digests
+either side.
+
+Decisions worth stating:
+
+- **A retest is a run.** It reuses `assessment_runs` with `kind=retest`, so it
+  inherits the authorization gate, the scope engine, the budgets, the audit
+  event and the evidence path rather than re-earning each of them — and cannot
+  drift from them later. It also takes its own explicit
+  `authorization_confirmed`: having scanned something once is not standing
+  permission to scan it again.
+- **There is no status column on a remediation task.** The finding's lifecycle
+  is the single source of truth for security state; the task carries the work
+  (assignee, due date, notes). Two state machines over one fact drift, and
+  when they disagree nobody can say which one a report should believe.
+- **`not_tested` is a first-class verdict, and it is why this phase needed a
+  new table at all.** An ordinary scan cannot express an absence: a run that
+  no longer reports a weakness looks exactly like a run whose probe never got
+  to try. So a retest writes down what it set out to check and gives each
+  finding a verdict — and a probe that was skipped, refused by scope, held
+  back by safe mode, or cut short by a halt is reported as not tested, never
+  as a fix. Two tests drive that path specifically.
+- **"Did the probe run?" needed its own record.** The first implementation
+  inferred it from whether the probe wrote any result, which is wrong in the
+  dangerous direction: a probe that ran and found nothing writes nothing, so a
+  genuine fix was being reported as `not_tested`. Runs now record
+  `probes_executed` from the orchestrator's own check results. A run from
+  before that column existed has an empty list and every verdict fails closed
+  to `not_tested`.
+- **The baseline is a snapshot, not a live read.** Both halves of the
+  comparison move otherwise: the run overwrites a reproduced finding's
+  `evidence_ref`, and someone triaging in the meantime changes its state. The
+  run stores each finding's id, fingerprint, probe id, severity and evidence
+  digest before it starts.
+- **Only a finding that was awaiting a retest is closed by one.** Requesting a
+  retest moves `remediated` → `retest_required`, which is the transition §11
+  reserves for exactly this moment. A not-reproduced verdict then closes it and
+  closes its task. A finding still `in_remediation` has not been declared
+  fixed by anybody, and the platform will not declare it for them.
+- **A report says which kind of claim it is making.** A retest renders the
+  three verdicts with before/after digests. An assessment renders recurrence
+  instead and labels it as the weaker claim it is, rather than implying it
+  compared anything.
+- **A retest naming an unknown finding is refused, not narrowed.** Quietly
+  dropping a finding would report a clean result for work that was never
+  checked.
+
+Deferred out of Phase 9, with reasons:
+
+- **No partial retest.** A retest re-runs the target's whole configured check
+  set and then compares; it does not run only the one probe behind a finding.
+  Narrowing the run would be faster but would change what the control
+  comparison means, and the ASR machinery's controls are per-probe for a
+  reason. Recorded as a performance gap, not a correctness one.
+- **No notifications.** §17's `retest.completed` webhook and in-app events are
+  not built; the verdicts are visible through the API and the report.
+- **No SLA or ageing on the board.** Due dates are stored and returned, but
+  nothing computes breach, and no effort or priority band is invented — the
+  report is explicit that this tool does not estimate effort.
+- **Before/after evidence is two digests, not a diff.** A reader can download
+  both bundles and compare them; the platform does not render a structured
+  difference between them.
+
 ## Later phases
 
-See `docs/BUILD_SPEC.md` §26 for the full phase plan. Remaining: Phases 9–13
-(remediation & retest, CLI/CI gate, plugins, demo lab & hardening,
-documentation & release), plus Phase 15 (DAST), 17 (workflows, dashboard,
-CI gate) and 18 (RASP extension points).
+See `docs/BUILD_SPEC.md` §26 for the full phase plan. Remaining: Phases 10–13
+(CLI/CI gate, plugins, demo lab & hardening, documentation & release), plus
+Phase 15 (DAST), 17 (workflows, dashboard, CI gate) and 18 (RASP extension
+points).

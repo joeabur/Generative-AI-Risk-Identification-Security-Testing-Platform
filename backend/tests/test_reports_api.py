@@ -290,14 +290,22 @@ async def test_the_run_wrote_verifiable_evidence_a_member_can_download(
     verification = (await client.get(f"{base}/verify", headers=headers)).json()
     assert verification == {"ok": True, "entries": len(manifest), "problems": []}
 
-    bundle = await client.get(f"{base}/{manifest[0]['digest']}", headers=headers)
-    assert bundle.status_code == 200
-    body = json.loads(bundle.text)
-    assert body["probe_id"] == manifest[0]["probe_id"]
-    assert body["canaries"]
-    # The exchange is there, and the secret the lab discloses is not.
-    assert body["request"]["body"]
-    assert "sk-proj-" not in bundle.text
+    # Both engines write evidence now, so the manifest mixes API-probe
+    # exchanges with AI-probe turns. Every entry has to be downloadable, and
+    # none of them may carry the credential the lab discloses.
+    bodies = []
+    for entry in manifest:
+        bundle = await client.get(f"{base}/{entry['digest']}", headers=headers)
+        assert bundle.status_code == 200, entry["digest"]
+        body = json.loads(bundle.text)
+        assert body["probe_id"] == entry["probe_id"]
+        assert body["request"]["method"]
+        assert "sk-proj-" not in bundle.text
+        bodies.append(body)
+
+    # The marker-based ones carry this run's canary, which is what makes their
+    # detection checkable rather than asserted.
+    assert [body for body in bodies if body["canaries"]]
 
 
 async def test_a_finding_points_at_the_evidence_that_supports_it(

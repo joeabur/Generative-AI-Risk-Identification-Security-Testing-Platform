@@ -17,7 +17,7 @@ identify what to rotate and not enough to use it.
 import hashlib
 from pathlib import Path
 
-from app.core.appsec.contract import EngineMeta, Pillar
+from app.core.appsec.contract import EngineMeta, Pillar, code_evidence
 from app.core.appsec.workspace import Workspace
 from app.core.probes.models import Category, Confidence, ScanResult, Severity
 from app.core.redaction.secrets import SecretMatch, find_secrets
@@ -146,4 +146,16 @@ class SecretScanEngine:
             # committed secret stays one finding as the file moves around it.
             fingerprint="sha256:"
             + hashlib.sha256(f"{match.sha256}|{relative}".encode()).hexdigest(),
+            # The matched span goes through the same redaction as every other
+            # bundle, so what is stored is the digest and the masked preview —
+            # the one place where storing evidence verbatim would republish
+            # the very thing the finding is about.
+            evidence_bundle=code_evidence(
+                self.meta,
+                rule_id=match.kind,
+                relative_path=relative,
+                line=line,
+                snippet=match.masked_preview,
+                message=f"{match.kind} detected ({match.sha256})",
+            ),
         )

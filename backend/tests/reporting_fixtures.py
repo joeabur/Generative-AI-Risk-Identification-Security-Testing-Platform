@@ -8,10 +8,16 @@ file and line, and a finding whose text contains characters that HTML, CSV
 and SARIF each handle differently.
 """
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from app.core.measure.asr import DEFAULT_RULE
-from app.core.reporting.model import NotTested, ReportData, ReportFinding
+from app.core.reporting.model import (
+    NotTested,
+    ReportData,
+    ReportFinding,
+    RetestRecord,
+)
 from app.core.risk.publish import render_markdown as render_risk_tables
 
 FIXED_TIME = datetime(2026, 3, 4, 9, 30, 0, tzinfo=UTC)
@@ -163,4 +169,47 @@ def sample_report() -> ReportData:
         risk_model_tables=render_risk_tables(),
         tool_versions={"aegis": "0.1.0", "bandit": "1.7.9"},
         ai_drafted_sections=["remediation"],
+    )
+
+
+def retest_report() -> ReportData:
+    """The same assessment, re-run as a retest, with one of each verdict.
+
+    All three on purpose. A renderer that only ever saw reproduced and not
+    reproduced could quietly present `not_tested` as good news, which is the
+    one outcome that must never read as a fix.
+    """
+    base = sample_report()
+    return replace(
+        base,
+        is_retest=True,
+        retests=[
+            RetestRecord(
+                fingerprint="sha256:" + "3" * 64,
+                title="Command built from unvalidated input, with a <script> in the snippet",
+                severity="CRITICAL",
+                verdict="reproduced",
+                before_evidence_ref="sha256:" + "d" * 64,
+                after_evidence_ref="sha256:" + "e" * 64,
+                detail="This run reported the same fingerprint again.",
+            ),
+            RetestRecord(
+                fingerprint="sha256:" + "1" * 64,
+                title="Direct prompt injection overrides the system instruction",
+                severity="HIGH",
+                verdict="not_reproduced",
+                before_evidence_ref="sha256:" + "a" * 64,
+                after_evidence_ref=None,
+                detail="AEGIS-AI-001 ran and did not report this fingerprint.",
+            ),
+            RetestRecord(
+                fingerprint="sha256:" + "2" * 64,
+                title="Tool invocation is not scoped to the requesting user",
+                severity="MEDIUM",
+                verdict="not_tested",
+                before_evidence_ref=None,
+                after_evidence_ref=None,
+                detail=("AEGIS-AI-030 produced no result in this run. Not looking is not a fix."),
+            ),
+        ],
     )

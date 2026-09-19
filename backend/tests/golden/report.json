@@ -211,6 +211,10 @@
     ],
     "trials_per_probe": 5
   },
+  "retest": {
+    "is_retest": false,
+    "results": []
+  },
   "risk_summary": {
     "CRITICAL": 1,
     "HIGH": 1,

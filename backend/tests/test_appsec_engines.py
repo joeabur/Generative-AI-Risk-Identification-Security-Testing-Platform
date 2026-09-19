@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from app.core.appsec.contract import code_span_signature, finding_fingerprint
+from app.core.appsec.contract import code_span_signature, finding_fingerprint, relative_to_workspace
 from app.core.appsec.identifiers import (
     is_advisory,
     is_cve,
@@ -21,6 +21,7 @@ from app.core.appsec.identifiers import (
     verified_cwes,
 )
 from app.core.appsec.registry import appsec_engines
+from app.core.appsec.sast.semgrep_engine import SemgrepEngine
 from app.core.appsec.tooling import tool_available
 from app.core.appsec.workspace import CodeScope, CodeScopeError, resolve_workspace
 from app.core.probes.models import ScanResult, Severity
@@ -413,3 +414,104 @@ def test_sca_fingerprint_ignores_the_resolved_version() -> None:
     second = engine._normalize(bumped, "requirements.txt")[0]
 
     assert first.fingerprint == second.fingerprint
+
+
+# --- paths (a lab audit found these the hard way) -------------------------
+
+
+def test_a_path_outside_the_workspace_is_dropped_not_trimmed() -> None:
+    """A result about a file the operator did not put in scope is not a
+    result this platform reports, however the tool phrased the path."""
+    workspace = _workspace("vulnerable")
+    assert relative_to_workspace("/etc/passwd", workspace) is None
+    assert relative_to_workspace("", workspace) is None
+    assert relative_to_workspace("../../etc/passwd", workspace) is None
+
+
+def test_the_shapes_a_tool_actually_emits_all_normalize() -> None:
+    workspace = _workspace("vulnerable")
+    absolute = str(workspace.root / "src/app.py")
+    for raw in ("src/app.py", "./src/app.py", absolute, f"file://{absolute}"):
+        assert relative_to_workspace(raw, workspace) == "src/app.py", raw
+
+
+def test_a_sarif_absolute_uri_does_not_leak_the_checkout_directory(tmp_path: Path) -> None:
+    """The bug this test exists for: `uri.lstrip("./")` strips characters,
+    not a prefix, so an absolute URI became `home/runner/checkout-a1b2/...`.
+    A checkout directory is unique per run, and the path is part of the
+    fingerprint — so every finding got a new identity on every scan, and the
+    worker's filesystem layout went into the report.
+    """
+    engine = SemgrepEngine()
+
+    def _sarif(root: Path) -> dict:
+        return {
+            "runs": [
+                {
+                    "tool": {"driver": {"rules": [{"id": "aegis.unsafe-yaml-load"}]}},
+                    "results": [
+                        {
+                            "ruleId": "aegis.unsafe-yaml-load",
+                            "message": {"text": "yaml.load without SafeLoader"},
+                            "locations": [
+                                {
+                                    "physicalLocation": {
+                                        "artifactLocation": {"uri": str(root / "src/app.py")},
+                                        "region": {
+                                            "startLine": 36,
+                                            "snippet": {"text": "yaml.load(raw)"},
+                                        },
+                                    }
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
+        }
+
+    # The same file, scanned from two different checkout directories.
+    fingerprints = set()
+    for name in ("checkout-a1b2", "checkout-c3d4"):
+        root = tmp_path / name
+        (root / "src").mkdir(parents=True)
+        (root / "src/app.py").write_text("yaml.load(raw)\n", encoding="utf-8")
+        workspace = resolve_workspace(root, CodeScope(allowed_paths=("src/**",)))
+
+        findings = engine.parse_sarif(_sarif(root), workspace)
+        assert len(findings) == 1
+        assert findings[0].endpoint == "src/app.py:36"
+        assert str(root) not in findings[0].endpoint
+        assert str(root) not in findings[0].evidence
+        fingerprints.add(findings[0].fingerprint)
+
+    assert len(fingerprints) == 1, "the same defect must keep one identity across checkouts"
+
+
+async def test_every_reportable_static_finding_carries_downloadable_evidence(
+    vulnerable_results: list[ScanResult],
+) -> None:
+    """Evidence is what makes a retest a comparison rather than an opinion.
+
+    Only reportable findings: a "not tested" marker has no code span behind
+    it, and giving it one would make the evidence manifest claim a scan that
+    did not happen.
+    """
+    for result in _reportable(vulnerable_results):
+        assert result.evidence_bundle is not None, result.id
+        assert result.evidence_bundle.request["method"] == "SCAN"
+        assert result.evidence_bundle.adapter["rule_id"]
+
+
+async def test_a_secret_findings_bundle_does_not_republish_the_secret(
+    vulnerable_results: list[ScanResult],
+) -> None:
+    """The one place where storing evidence verbatim would spread the very
+    thing being reported."""
+    secrets = [r for r in vulnerable_results if r.id.startswith("AEGIS-SECRET-")]
+    assert secrets
+    for result in secrets:
+        assert result.evidence_bundle is not None
+        payload = result.evidence_bundle.canonical_bytes().decode()
+        assert "AKIA" not in payload or "AKIA****" in payload
+        assert "aegis-dev-only" not in payload

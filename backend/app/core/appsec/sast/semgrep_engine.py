@@ -16,7 +16,9 @@ from typing import Any
 from app.core.appsec.contract import (
     EngineMeta,
     Pillar,
+    code_evidence,
     finding_fingerprint,
+    relative_to_workspace,
     severity_from,
     tool_unavailable,
 )
@@ -129,7 +131,12 @@ class SemgrepEngine:
         if not locations:
             return None
         physical = locations[0].get("physicalLocation", {})
-        relative = str(physical.get("artifactLocation", {}).get("uri", "")).lstrip("./")
+        relative = relative_to_workspace(
+            str(physical.get("artifactLocation", {}).get("uri", "")), workspace
+        )
+        # Outside the workspace, or unreadable: not this scan's to report.
+        if relative is None:
+            return None
         region = physical.get("region", {})
         line = region.get("startLine")
         snippet = str(region.get("snippet", {}).get("text", ""))[:MAX_SNIPPET_CHARS]
@@ -172,5 +179,13 @@ class SemgrepEngine:
             ),
             fingerprint=finding_fingerprint(
                 rule_id=rule_id, relative_path=relative, snippet=snippet
+            ),
+            evidence_bundle=code_evidence(
+                self.meta,
+                rule_id=rule_id,
+                relative_path=relative,
+                line=line if isinstance(line, int) else None,
+                snippet=snippet,
+                message=message,
             ),
         )

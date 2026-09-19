@@ -22,7 +22,14 @@ to everyone anyway.
 """
 
 from app.core.discovery.openapi import DiscoveredOperation
-from app.core.probes.api._support import clip, operation_url, surface_label, try_send, untested
+from app.core.probes.api._support import (
+    clip,
+    evidence_of,
+    operation_url,
+    surface_label,
+    try_send,
+    untested,
+)
 from app.core.probes.models import Category, Confidence, ScanResult, Severity
 from app.core.probes.protocol import ProbeTarget
 from app.core.scope.context import RunContext
@@ -156,6 +163,19 @@ class BrokenObjectLevelAuthorizationProbe:
                         f"object, and observe HTTP {attempt.status_code} instead of 403 "
                         "or 404.",
                     ),
+                    # The unauthorized success is the finding. No body: that
+                    # body is the other account's data, and the probe's whole
+                    # point is that it should not have been readable.
+                    evidence_bundle=evidence_of(
+                        attempt,
+                        probe_id=self.id,
+                        probe_version=self.version,
+                        request_headers=plan.credentials.headers_for(other),
+                        verdict=(
+                            f"HTTP {attempt.status_code} as non-owner '{other.label}'; "
+                            f"owner control returned HTTP {control.status_code}"
+                        ),
+                    ),
                 )
             )
         return results
@@ -266,6 +286,18 @@ class BrokenFunctionLevelAuthorizationProbe:
                         f"As unprivileged test account '{account.label}', send "
                         f"{operation.method} {url}.",
                         f"Observe HTTP {attempt.status_code} rather than 403.",
+                    ),
+                    # As above: the decision is the evidence, not the
+                    # administrative data behind it.
+                    evidence_bundle=evidence_of(
+                        attempt,
+                        probe_id=self.id,
+                        probe_version=self.version,
+                        request_headers=plan.credentials.headers_for(account),
+                        verdict=(
+                            f"HTTP {attempt.status_code} as unprivileged "
+                            f"'{account.label}'; {control_note}"
+                        ),
                     ),
                 )
             )

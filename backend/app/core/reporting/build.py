@@ -16,15 +16,25 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.measure.asr import DEFAULT_RULE
 from app.core.probes.models import Severity
-from app.core.reporting.model import NotTested, ReportData, ReportFinding
+from app.core.reporting.model import (
+    SEVERITY_ORDER,
+    NotTested,
+    ReportData,
+    ReportFinding,
+    RetestRecord,
+)
 from app.core.risk.publish import render_markdown as render_risk_tables
 from app.models.ai_draft import AiDraft
-from app.models.assessment_run import TERMINAL_STATUSES, AssessmentRun
+from app.models.assessment_run import TERMINAL_STATUSES, AssessmentRun, RunKind
 from app.models.finding import Finding
+from app.models.retest import RetestResult
 from app.models.scan_result import ScanResultRecord
 from app.models.target import Target
 
 TOOL_VERSION = "0.1.0"
+
+# Severity order as a lookup, for sorting rows that carry severity as a string.
+SEVERITY_ORDER_INDEX = {severity.value: index for index, severity in enumerate(SEVERITY_ORDER)}
 
 # Nothing here imports `app.core.assistant`, and a boundary test enforces it:
 # the platform has to work with the AI layer absent, so reporting reads which
@@ -169,6 +179,36 @@ async def build_report(db: AsyncSession, *, run: AssessmentRun, target: Target) 
             "IaC analysis did not run against this target."
         )
 
+    # A retest's verdicts, joined to their findings for the titles a reader
+    # needs. Ordered by severity at baseline so the worst thing that is still
+    # there is the first thing read.
+    retests: list[RetestRecord] = []
+    if run.kind is RunKind.RETEST:
+        rows = list(
+            (
+                await db.execute(
+                    select(RetestResult, Finding)
+                    .join(Finding, Finding.id == RetestResult.finding_id)
+                    .where(RetestResult.run_id == run.id)
+                )
+            ).all()
+        )
+        retests = sorted(
+            (
+                RetestRecord(
+                    fingerprint=row.RetestResult.fingerprint,
+                    title=row.Finding.title,
+                    severity=row.Finding.severity.value,
+                    verdict=row.RetestResult.verdict.value,
+                    before_evidence_ref=row.RetestResult.before_evidence_ref,
+                    after_evidence_ref=row.RetestResult.after_evidence_ref,
+                    detail=row.RetestResult.detail,
+                )
+                for row in rows
+            ),
+            key=lambda record: SEVERITY_ORDER_INDEX.get(record.severity, 99),
+        )
+
     return ReportData(
         organization=str(run.organization_id),
         target_name=target.name,
@@ -207,6 +247,8 @@ async def build_report(db: AsyncSession, *, run: AssessmentRun, target: Target) 
         permission_graph=_permission_graph(results),
         findings=[_report_finding(finding) for finding in findings],
         not_tested=_not_tested_from(results),
+        is_retest=run.kind is RunKind.RETEST,
+        retests=retests,
         checks_completed=run.checks_completed,
         checks_total=run.checks_total,
         requests_blocked=run.requests_blocked,
@@ -297,6 +339,21 @@ def to_canonical_json(report: ReportData) -> str:
             }
             for finding in report.findings
         ],
+        "retest": {
+            "is_retest": report.is_retest,
+            "results": [
+                {
+                    "fingerprint": record.fingerprint,
+                    "title": record.title,
+                    "severity": record.severity,
+                    "verdict": record.verdict,
+                    "before_evidence_ref": record.before_evidence_ref,
+                    "after_evidence_ref": record.after_evidence_ref,
+                    "detail": record.detail,
+                }
+                for record in report.retests
+            ],
+        },
         "coverage": {
             "reported_against": report.frameworks_covered(),
             "not_tested": [

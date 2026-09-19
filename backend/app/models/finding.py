@@ -39,6 +39,7 @@ from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
     from app.models.organization import Organization
+    from app.models.remediation import RemediationTask
 
 
 class FindingStatus(StrEnum):
@@ -168,4 +169,18 @@ class Finding(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         UUID(as_uuid=True), ForeignKey("assessment_runs.id", ondelete="SET NULL"), nullable=True
     )
 
+    # §11's `retest_result`, denormalized onto the finding so a board can
+    # show "was this actually fixed?" without a join. `retest_results` holds
+    # the full history; this is the latest verdict.
+    retest_result: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    last_retest_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("assessment_runs.id", ondelete="SET NULL"), nullable=True
+    )
+
     organization: Mapped["Organization"] = relationship()
+    # §11's `remediation_task_id`, as a relationship rather than a duplicated
+    # column: the task already carries a unique `finding_id`, and a second
+    # copy of the same edge is a second thing that can be wrong.
+    remediation_task: Mapped["RemediationTask | None"] = relationship(
+        back_populates="finding", cascade="all, delete-orphan", uselist=False
+    )

@@ -6,13 +6,14 @@ the tool cannot wander outside them. It makes no network calls.
 """
 
 import json
-from pathlib import Path
 from typing import Any
 
 from app.core.appsec.contract import (
     EngineMeta,
     Pillar,
+    code_evidence,
     finding_fingerprint,
+    relative_to_workspace,
     severity_from,
     tool_unavailable,
 )
@@ -108,11 +109,8 @@ class BanditEngine:
         if not is_rule_id(rule_id):
             return None
 
-        try:
-            relative = str(
-                Path(str(item.get("filename", ""))).resolve().relative_to(workspace.root)
-            )
-        except (ValueError, OSError):
+        relative = relative_to_workspace(str(item.get("filename", "")), workspace)
+        if relative is None:
             return None
 
         advisory = rule_id in _ADVISORY_RULES
@@ -174,5 +172,13 @@ class BanditEngine:
             # Fingerprint on rule + path + code span, never the line number.
             fingerprint=finding_fingerprint(
                 rule_id=rule_id, relative_path=relative, snippet=snippet
+            ),
+            evidence_bundle=code_evidence(
+                self.meta,
+                rule_id=rule_id,
+                relative_path=relative,
+                line=int(line) if isinstance(line, int) else None,
+                snippet=snippet,
+                message=str(item.get("issue_text", "")),
             ),
         )

@@ -11,9 +11,12 @@ import hashlib
 import re
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from typing import Protocol, runtime_checkable
+from urllib.parse import unquote, urlsplit
 
 from app.core.appsec.workspace import Workspace
+from app.core.evidence.bundle import EvidenceBundle, build_bundle
 from app.core.probes.models import Category, Confidence, ScanResult, Severity
 
 
@@ -65,6 +68,76 @@ def finding_fingerprint(*, rule_id: str, relative_path: str, snippet: str) -> st
     """rule id + normalized path + code-span signature (Addendum §4.1)."""
     material = f"{rule_id}|{relative_path}|{code_span_signature(snippet)}"
     return "sha256:" + hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def relative_to_workspace(raw: str, workspace: Workspace) -> str | None:
+    """A workspace-relative path, or `None` if it is not in the workspace.
+
+    Every engine needs this and the naive version is wrong in a way that
+    matters. `uri.lstrip("./")` — which the semgrep engine used until a lab
+    audit caught it — strips *characters*, not a prefix: it turns
+    `./src/app.py` into `src/app.py` as intended, but it also turns
+    `/home/runner/checkout-a1b2/src/app.py` into
+    `home/runner/checkout-a1b2/src/app.py`. That is worse than cosmetic. The
+    path is part of the §11 fingerprint, and a checkout directory is unique
+    per run, so every finding would get a new identity on every scan: no
+    dedup, no history, no "is this still there?". It also puts the worker's
+    filesystem layout into a customer-facing report.
+
+    Anything that resolves outside the workspace is dropped rather than
+    reported with a trimmed path, on the same principle as the rest of the
+    scope engine: a result about a file the operator did not put in scope is
+    not a result this platform reports.
+    """
+    text = raw.strip()
+    if not text:
+        return None
+    if text.startswith("file://"):
+        text = unquote(urlsplit(text).path)
+    candidate = Path(text)
+    try:
+        resolved = candidate if candidate.is_absolute() else (workspace.root / candidate)
+        return str(resolved.resolve().relative_to(workspace.root))
+    except (ValueError, OSError):
+        return None
+
+
+def code_evidence(
+    meta: EngineMeta,
+    *,
+    rule_id: str,
+    relative_path: str,
+    line: int | None,
+    snippet: str,
+    message: str,
+) -> EvidenceBundle:
+    """The sealed bundle behind a static finding (docs/BUILD_SPEC.md §13).
+
+    A static finding's "exchange" is a tool reading a file, so the bundle
+    records that shape: the tool and rule that ran as the request, the code
+    span it matched as the response. That is what makes a retest comparable —
+    "the same rule at the same path now matches nothing" is a claim someone
+    can check, where a prose line of evidence is not.
+
+    The snippet goes through `build_bundle` like everything else, which
+    matters most for the secrets engine: the span that matched a credential
+    is stored as a digest and a masked preview, never as the value.
+    """
+    location = f"{relative_path}:{line}" if line else relative_path
+    return build_bundle(
+        probe_id=meta.id,
+        probe_version=meta.version,
+        # Not an HTTP request, and it does not pretend to be: `SCAN` plus a
+        # file URL says what actually happened, where a fabricated GET and a
+        # 200 would invite a reader to think a server answered.
+        method="SCAN",
+        url=f"file:///{relative_path}" + (f"#L{line}" if line else ""),
+        request_body=f"{meta.tool} rule {rule_id} against {location}",
+        status_code=None,
+        response_body=snippet,
+        adapter={"tool": meta.tool, "pillar": meta.pillar.value, "rule_id": rule_id},
+        detector_verdict=f"{meta.tool} {rule_id}: {message}"[:1000],
+    )
 
 
 def tool_unavailable(meta: EngineMeta, reason: str) -> ScanResult:

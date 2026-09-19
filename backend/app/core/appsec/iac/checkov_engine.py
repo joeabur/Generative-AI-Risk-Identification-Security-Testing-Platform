@@ -12,6 +12,7 @@ from typing import Any
 from app.core.appsec.contract import (
     EngineMeta,
     Pillar,
+    code_evidence,
     finding_fingerprint,
     severity_from,
     tool_unavailable,
@@ -148,5 +149,13 @@ class CheckovEngine:
             ),
             fingerprint=finding_fingerprint(
                 rule_id=check_id, relative_path=relative, snippet=resource or snippet
+            ),
+            evidence_bundle=code_evidence(
+                self.meta,
+                rule_id=check_id,
+                relative_path=relative,
+                line=line if isinstance(line, int) else None,
+                snippet=snippet,
+                message=str(item.get("check_name", "")),
             ),
         )

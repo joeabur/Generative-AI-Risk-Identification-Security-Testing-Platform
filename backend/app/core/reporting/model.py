@@ -81,6 +81,19 @@ class NotTested:
 
 
 @dataclass(frozen=True)
+class RetestRecord:
+    """One finding's retest verdict, with the digests either side of it."""
+
+    fingerprint: str
+    title: str
+    severity: str
+    verdict: str
+    before_evidence_ref: str | None
+    after_evidence_ref: str | None
+    detail: str
+
+
+@dataclass(frozen=True)
 class ReportData:
     """Everything every template draws from."""
 
@@ -120,6 +133,10 @@ class ReportData:
     # --- results --------------------------------------------------------
     findings: list[ReportFinding] = field(default_factory=list)
     not_tested: list[NotTested] = field(default_factory=list)
+    # Present when this run was a retest. Empty on an ordinary assessment,
+    # which is not the same as "everything was fixed" — the renderer says so.
+    is_retest: bool = False
+    retests: list[RetestRecord] = field(default_factory=list)
     checks_completed: int = 0
     checks_total: int = 0
     requests_blocked: int = 0

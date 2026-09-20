@@ -5,7 +5,7 @@ run it. It states what the controls are, how each one was verified, and what is
 deliberately not covered. Where a control is weaker than it might appear, that
 is said here rather than left to be discovered.
 
-Reviewed on branch `claude/ai-risk-security-platform-vc1nch`, through Phase 15.
+Reviewed on branch `claude/ai-risk-security-platform-vc1nch`, through Phase 17.
 The test count moves with every phase; `docs/roadmap.md` records what each one
 added and what it deliberately left out.
 
@@ -158,14 +158,21 @@ Stated plainly, because a review that lists only strengths is marketing.
 | No rate limiting on authentication endpoints | Online password guessing is bounded only by Argon2's cost |
 | No server-side JWT revocation | A stolen session token is valid until it expires |
 | No encryption at rest for evidence | A host compromise yields redacted evidence bundles |
-| No CSRF token on cookie-authenticated routes | `SameSite=Lax` is the only protection |
+| No CSRF token on cookie-authenticated routes | `SameSite=Lax` is the only protection; the dashboard is read-only because of it |
 | No signature verification for plugins | The allowlist and an optional hash are the controls |
-| Container, license, EOL and malware scanning absent | The dependency picture is advisory-only |
-| DAST absent | Nothing crawls; only declared surfaces are tested |
-| `mapping_versions` empty | Framework mappings are unpinned, and say so |
+| Malware scanning of dependencies absent | Container, licence, EOL and name-confusion analysis exist; nothing checks a package for a malicious payload |
+| DAST scanners are not gated at the socket | Nuclei and ZAP open their own connections — see the Phase 15 section below |
 | Advisory lookup off by default | SCA reports what is installed, not what is vulnerable, unless enabled |
+| No inbound webhook endpoint | Workflows and PR publishing are driven by CI, never by an event from a code host |
+| Dashboard has no pagination | Findings cap at 200, runs at 50; the API is the complete answer |
 | Four §23 workflows absent | `release.yml`, `framework-drift.yml` and two others are not written |
 | No Sigstore signing | Releases are unsigned |
+
+Three rows that stood here through Phase 15 have been removed because the gaps
+were closed, not because they got quieter: container, licence and end-of-life
+scanning landed with the Aikido-parity engines; DAST landed in Phase 15 (with
+its own, narrower gap now listed above); and `mapping_versions` is populated
+from pinned framework editions as of Phase 13.
 
 `docs/roadmap.md` carries the reasoning for each.
 
@@ -182,8 +189,15 @@ Stated plainly, because a review that lists only strengths is marketing.
 
 ## How to re-run this review
 
+The scanner binaries (`semgrep`, `bandit`, `checkov`, `pip-audit`) must be on
+`PATH`, not merely installed in the virtualenv directory. Without them the
+AppSec engines correctly emit `not tested` markers rather than silent passes —
+which is the designed behaviour, but it reads as nine test failures if you did
+not mean it. Activate the environment first.
+
 ```bash
 cd backend
+source .venv/bin/activate                    # so the scanners are on PATH
 pytest -q                                    # everything
 pytest tests/security -q                     # scope, authz, tenant isolation
 pytest -m lab_e2e -q                         # a real assessment against the lab
@@ -222,3 +236,45 @@ ZAP open their own connections. This is the weakest point in the phase.
 If this platform grows a requirement that *all* outbound traffic be observable,
 these two adapters are what would have to change — most likely by running them
 behind a local proxy this platform controls, which is not built.
+
+## Phase 17 additions: workflows and the dashboard
+
+One new attack surface, handled by removing it; one gap closed; one gate
+hardened.
+
+**The dashboard is read-only, and that is the CSRF answer.** `/app` is a new
+cookie-authenticated surface, and this platform has no CSRF token. Rather than
+ship state-changing page routes behind `SameSite=Lax` alone, every route under
+`/app` is a `GET`, and a test walks the route table and fails if that ever
+stops being true. Actions are rendered as disabled controls carrying the reason
+and the API call that performs them, so the limitation is visible to the
+operator rather than discovered.
+
+Verified by adding a `POST` handler and watching the test fail. The same
+enumeration asserts every organization-scoped page declares a minimum role
+through `require_membership`, so a non-member gets the same **404** the API
+gives — proved by removing the dependency from one page and watching both that
+test and the tenant-isolation test fail.
+
+**Autoescaping is asserted, not assumed.** A findings page renders a probe's
+own payload as echoed back by the target. Rendering that raw would make this
+platform's dashboard the stored-XSS sink it tests its clients for.
+
+**No third-party script on the findings page.** HTMX is not committed and there
+is no CDN tag; the `<script>` element renders only if an operator vendored the
+file into `app/web/static/`. A test asserts every script a template loads is
+served by this application. This is a deliberate supply-chain position, and
+`docs/dashboard.md` says how to vendor it and what to check.
+
+**A gate that cannot be parsed is refused twice.** On write (422, through the
+same `load_config` the CLI gate uses) and on evaluation (the run is `refused`,
+never a pass, never the default). The first closes a real window: a malformed
+gate stored today is a release that ships ungated next month.
+
+**A test that passed when it should not have, and what it cost.** The first
+version of the "every number is a real query" test asserted against the query
+object rather than the page. Replacing a dashboard card's value with a literal
+`0` did not break it. It was rewritten to read the rendered HTML and compare
+every card and severity row to the query's output. The original would have
+shipped a green suite around a guarantee that was not being checked — which is
+the failure mode this whole document exists to catch.

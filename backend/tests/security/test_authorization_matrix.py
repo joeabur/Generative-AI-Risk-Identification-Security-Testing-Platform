@@ -37,6 +37,7 @@ from app.api.v1.routers import (
     surface,
     targets,
     vcs,
+    workflows,
 )
 from app.models.organization import Role
 
@@ -57,6 +58,7 @@ ROUTERS = (
     surface,
     targets,
     vcs,
+    workflows,
 )
 
 # Routes excluded from the live request matrix, with the reason each one
@@ -192,6 +194,20 @@ EXPECTED_ROLES: dict[tuple[str, str], Role] = {
     ("POST", "/organizations/{organization_id}/targets"): Role.ADMIN,
     ("POST", "/organizations/{organization_id}/targets/{target_id}/authorization"): Role.ADMIN,
     ("POST", "/organizations/{organization_id}/targets/{target_id}/scope/explain"): Role.VIEWER,
+    # Phase 17 workflows. Defining one changes what gates a release, so that is
+    # admin; triggering one runs an assessment, so it is the same security
+    # engineer that POST /runs requires — a workflow must not be a cheaper way
+    # to start a scan.
+    ("POST", "/organizations/{organization_id}/workflows"): Role.ADMIN,
+    ("GET", "/organizations/{organization_id}/workflows"): Role.ANALYST,
+    ("GET", "/organizations/{organization_id}/workflows/{workflow_id}"): Role.ANALYST,
+    ("PATCH", "/organizations/{organization_id}/workflows/{workflow_id}"): Role.ADMIN,
+    ("DELETE", "/organizations/{organization_id}/workflows/{workflow_id}"): Role.ADMIN,
+    (
+        "POST",
+        "/organizations/{organization_id}/workflows/{workflow_id}/runs",
+    ): Role.SECURITY_ENGINEER,
+    ("GET", "/organizations/{organization_id}/workflows/{workflow_id}/runs"): Role.ANALYST,
     ("DELETE", "/organizations/{organization_id}/notification-channels/{channel_id}"): Role.ADMIN,
     ("GET", "/organizations/{organization_id}/notification-channels"): Role.ANALYST,
     (

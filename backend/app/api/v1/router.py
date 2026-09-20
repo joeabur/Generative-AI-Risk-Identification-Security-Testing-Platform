@@ -14,6 +14,7 @@ from app.api.v1.routers import (
     surface,
     targets,
     vcs,
+    workflows,
 )
 
 api_router = APIRouter()
@@ -30,3 +31,4 @@ api_router.include_router(remediation.router)
 api_router.include_router(integrations.router)
 api_router.include_router(vcs.router)
 api_router.include_router(assistant.router)
+api_router.include_router(workflows.router)

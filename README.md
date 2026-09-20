@@ -43,9 +43,18 @@ There is an isolated, intentionally vulnerable demo lab in
 [`demo-target/`](demo-target/), and a self-review of the platform's own
 controls in [`docs/security-review.md`](docs/security-review.md).
 
-Still to come: the workflow engine and HTMX dashboard (Phase 17), and RASP
-extension points (18) — the shipped frontend
-is still the auth scaffold only. [`docs/roadmap.md`](docs/roadmap.md) records
+Workflows and a server-rendered dashboard are in: a workflow is five stages
+(trigger, plan, actions, evidence, result) whose plan is derived from the
+trigger and the target's configuration alone, and whose gate decision an AI
+recommendation structurally cannot alter — see
+[`docs/workflows.md`](docs/workflows.md). The dashboard at `/app` is Jinja2 with
+optional HTMX, read-only because this platform has no CSRF token, and every
+number on it is a real query — see [`docs/dashboard.md`](docs/dashboard.md).
+The Next.js app in `frontend/` remains the Phase-1 auth scaffold and is not
+the dashboard.
+
+Still to come: RASP extension points (Phase 18).
+[`docs/roadmap.md`](docs/roadmap.md) records
 exactly what's built versus deferred, and why, phase by phase;
 [`docs/limitations.md`](docs/limitations.md) says what the tool cannot detect
 and where its false positives cluster.

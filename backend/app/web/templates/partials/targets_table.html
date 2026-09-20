@@ -1,0 +1,33 @@
+<div id="targets-table" class="panel">
+{% if targets %}
+  <table>
+    <thead>
+      <tr><th>Name</th><th>Kind</th><th>Environment</th><th>Base URL</th>
+          <th>Authorization</th><th>Scope</th><th>Ready to scan</th></tr>
+    </thead>
+    <tbody>
+    {% for row in targets %}
+      <tr>
+        <td>{{ row.name }}</td>
+        <td>{{ row.kind }}</td>
+        <td><span class="pill">{{ row.environment }}</span></td>
+        <td><code>{{ row.base_url|truncate(48, true) }}</code></td>
+        <td>
+          {%- if row.authorization_state == "valid" -%}granted
+          {%- elif row.authorization_state == "expired" -%}<span class="sev sev-HIGH">expired</span>
+          {%- else -%}<span class="sev sev-HIGH">none</span>{%- endif -%}
+        </td>
+        <td>{{ "configured" if row.has_scope else "none" }}</td>
+        <td>
+          {%- if row.blockers -%}
+            <span class="sev sev-MEDIUM">no</span> — {{ row.blockers|join("; ") }}
+          {%- else -%}yes{%- endif -%}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <p class="empty">No targets registered.</p>
+{% endif %}
+</div>

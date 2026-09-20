@@ -26,8 +26,11 @@ from app.models.synthetic_account import SyntheticAccount
 from app.models.target import Target, TargetEnvironment, TargetKind
 from app.models.user import User
 from app.models.vcs import PullRequestPost, VcsConnection
+from app.models.workflow import Workflow, WorkflowRun
 
 __all__ = [
+    "Workflow",
+    "WorkflowRun",
     "PullRequestPost",
     "VcsConnection",
     "DeliveryStatus",

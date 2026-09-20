@@ -1,0 +1,34 @@
+<div id="workflow-runs-table" class="panel">
+{% if workflow_runs %}
+  <table>
+    <thead>
+      <tr><th>Started</th><th>Status</th><th>Trigger</th><th>Gate</th>
+          <th>Plan digest</th><th>Evidence</th><th>Reasons</th></tr>
+    </thead>
+    <tbody>
+    {% for run in workflow_runs %}
+      <tr>
+        <td class="num">{{ run.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+        <td><span class="pill">{{ run.status }}</span></td>
+        <td>{{ run.trigger.get("kind", "—") }}</td>
+        <td>
+          {%- if run.gate_passed is none -%}
+            {#- A gate that did not run is not a gate that passed. -#}
+            <span class="unknown">not decided</span>
+          {%- elif run.gate_passed -%}
+            pass
+          {%- else -%}
+            <span class="sev sev-HIGH">fail (exit {{ run.gate_exit_code }})</span>
+          {%- endif -%}
+        </td>
+        <td><code>{{ run.plan_digest[:19] }}…</code></td>
+        <td class="num">{{ run.evidence_refs|length }}</td>
+        <td>{{ run.gate_reasons|join("; ")|truncate(90, true) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <p class="empty">No workflow runs yet.</p>
+{% endif %}
+</div>

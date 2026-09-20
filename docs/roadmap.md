@@ -1579,3 +1579,120 @@ the check run body rather than vanishing, and both counts are recorded.
 Deliberately out of scope, and recorded rather than half-built: cloud posture
 management, runtime protection, and any "autofix" that pushes a commit to a
 customer's repository.
+
+## Phase 17 — workflows, dashboard & CI gate (done)
+
+Two acceptance criteria, both structural rather than behavioural: *a
+repository-change workflow runs the AppSec engines, normalises, correlates and
+gates deterministically*, and **an AI recommendation cannot alter a gate
+decision**. Plus §27's dashboard rules: no hardcoded values, and every visible
+action works or is disabled with a reason.
+
+`docs/workflows.md` and `docs/dashboard.md` are the reference; this records what
+was decided and what was left out.
+
+### The workflow is five stages, and no more
+
+`trigger → plan → actions → evidence → result`. No branching, no user-defined
+steps, no expression language. That limitation is the feature: a plan is a list
+of actions the platform already knows how to run, derived from the trigger and
+the target's configuration and nothing else, which is what makes `Plan.digest`
+mean something. Two runs whose digests match would have done the same things, so
+"did the plan change between these commits?" is a comparison rather than an
+investigation.
+
+Every action a plan *skips* is stored with its reason. A plan that silently
+omitted the AI scan because no adapter was configured would leave a reader
+unable to tell "nothing was found" from "nothing was looked for" — the same
+coverage-honesty rule the reports follow.
+
+### An AI recommendation cannot change a gate decision — three ways
+
+Not a policy the code asks nicely about:
+
+- `decide()` **has no parameter** for drafts, recommendations or suggestions,
+  so there is no argument a caller could pass. Adding
+  `drafts: Sequence[object] = ()` makes
+  `test_the_decision_function_takes_no_recommendation_parameter` fail — which
+  is how the property was verified, by adding it.
+- It builds `GateFinding`s from each finding's real columns, and
+  `app/core/workflow/result.py` never imports the assistant. Asserted by
+  parsing the module's imports with `ast`, not by grepping its text — the first
+  version grepped for `"assistant"` and matched the module's own docstring,
+  which is a test that passes for the wrong reason.
+- A draft proposing a different severity and a different status is stored,
+  the gate is re-run, and the decision is byte-identical.
+
+### A misconfigured gate never passes, at either end
+
+Validated on write (422 at the endpoint, through the same `load_config` the CLI
+gate uses, so `max_hihg: 0` is rejected where somebody typed it) and on
+evaluation (a stored configuration that cannot be parsed makes the run
+`refused`, never a pass, and never silently replaced by the default). Verified
+by removing the validator and watching two tests fail.
+
+### The dashboard is read-only, and that is the security decision
+
+Every route under `/app` is a `GET`, asserted by a test that walks the route
+table. The reason is the CSRF gap `docs/security-review.md` already listed: a
+cookie-authenticated route that changed state would be forgeable. So the
+dashboard renders the action, disables it, and states both the reason and the
+API call that performs it. §27's *"every visible action works or is disabled
+with a reason"*, met without pretending.
+
+### A test that passed when it should not have
+
+The first version of *"every number is a real query"* asserted against the
+query object and the presence of a finding's title. Replacing a card's value
+with a literal `0` **did not break it** — it was testing that the query worked,
+not that the page used it. It was rewritten to read the card values and the
+severity table back out of the rendered HTML and compare the whole set to the
+query's output, and now fails on exactly that edit. Recorded because the
+original would have shipped a green suite around a broken guarantee.
+
+Five other controls were verified the same way, each by breaking it: adding a
+`POST` route, hardcoding the severity breakdown, blanking the disabled-action
+reason, making `blockers` always empty, adding a CDN `<script>` tag, and
+removing `require_membership` from a page.
+
+### HTMX is not vendored, and the reason is stated
+
+The templates carry `hx-get` / `hx-target` and the handlers honour
+`HX-Request`, returning the fragment instead of the page — one handler, one
+query, two renderings. But `htmx.min.js` is **not committed**, and the base
+template renders no `<script>` tag without it.
+
+Two reasons. Fetching it here was refused by this environment's egress proxy
+(403 — an organization policy denial, reported rather than worked around), and
+independent of that, vendoring a minified third-party bundle into a security
+product is a supply-chain decision that belongs to whoever checked its hash.
+There is deliberately no CDN tag: unpinned third-party script on the page where
+findings are read is exactly what this platform tests its clients for. A test
+asserts every script a template loads is served by this application.
+
+**Nothing breaks without it.** Every page is a complete server-rendered
+document reachable by an ordinary link.
+
+### Deferrals, stated rather than hidden
+
+- **No inbound webhook endpoint.** `repository_change` and `pull_request` are
+  valid trigger kinds and nothing accepts an event *from* a code host. That
+  needs an authenticated endpoint with replay protection and a decision about
+  what a fork's push may trigger. Drive workflows from CI, which already
+  authenticates with an API key. (Same reasoning as the Phase-13 VCS deferral.)
+- **No scheduler.** `SCHEDULE` is a valid trigger kind; nothing fires it.
+- **Triggering a workflow does not queue an assessment.** It records the
+  trigger, the plan and the gate decision over findings that already exist. The
+  scan actions in the plan are executed by the assessment path — one code path
+  for "run an assessment", not two. Wiring the trigger to queue one is a small
+  change and is not made here, because it would mean a workflow could start a
+  scan through a route the run endpoint's own checks do not cover.
+- **The Next.js scaffold in `frontend/` remains and is not the dashboard.** It
+  is the Phase-1 auth scaffold. It was not deleted, because deleting a working
+  thing to make a claim tidier is not an improvement; it is recorded here as
+  superseded for the dashboard's purpose.
+- **The dashboard has no pagination.** Findings are capped at 200 and runs at
+  50. An organization past that sees the newest, and the API is the complete
+  answer.
+- **No CSRF token, so no actions.** If one is added, these routes are where the
+  actions go back, and the read-only test is what makes that deliberate.

@@ -11,7 +11,7 @@ engine, determinism/ASR methodology, domain model, and the phased build
 plan — lives in **[`docs/BUILD_SPEC.md`](docs/BUILD_SPEC.md)**. Read that
 first; this README is the practical "how do I run it" companion.
 
-**Current status: through Phase 12, plus Phases 14–16.** What works end to
+**Current status: v0.1.0 — Phases 1–14 and 16 complete.** What works end to
 end today: the scope/authorization engine and its gated transport (the single
 outbound control point), target adapters and OpenAPI discovery, run
 orchestration with cancellation and live progress, 16 API probes, 11 AI
@@ -43,10 +43,12 @@ There is an isolated, intentionally vulnerable demo lab in
 [`demo-target/`](demo-target/), and a self-review of the platform's own
 controls in [`docs/security-review.md`](docs/security-review.md).
 
-Still to come: the release documentation (Phase 13), DAST (15), and the HTMX
-dashboard (17) — the shipped
-frontend is still the auth scaffold only. [`docs/roadmap.md`](docs/roadmap.md) records exactly
-what's built versus deferred, and why, phase by phase.
+Still to come: DAST with a scope-gated crawler (Phase 15), the workflow engine
+and HTMX dashboard (17), and RASP extension points (18) — the shipped frontend
+is still the auth scaffold only. [`docs/roadmap.md`](docs/roadmap.md) records
+exactly what's built versus deferred, and why, phase by phase;
+[`docs/limitations.md`](docs/limitations.md) says what the tool cannot detect
+and where its false positives cluster.
 
 ## Why this exists
 
@@ -80,28 +82,41 @@ Phase 1 (rather than an MVP-first SQLite path) are in `docs/BUILD_SPEC.md`
 
 ## Quickstart
 
+Full instructions, including the two steps that are easy to miss, are in
+**[`docs/installation.md`](docs/installation.md)**. The executable version is
+[`docs/examples/quickstart.py`](docs/examples/quickstart.py) — the same script
+used to verify this release.
+
 ```bash
 cp .env.example .env
-docker compose up --build
+docker compose up --build          # see the note below
 ```
 
-Then open <http://localhost:3000>, register an account, and create an
-organization. The web UI stops there — targets, runs, findings, reports and
-evidence exist as API endpoints, not yet as pages (the dashboard is Phase
-17), so drive them against <http://localhost:8000/docs> for now. Nothing will
-reach a target until you record an authorization grant and Rules of
-Engagement for it; that refusal is the point.
+Then register, create an organization, register the demo lab as a target, and —
+before anything reaches it — record an authorization grant and rules of
+engagement. A run without a grant is refused with `409`. That refusal is the
+product.
 
-> **Note on this sandbox's own validation:** the application was validated
-> end to end by running the backend under `uvicorn` against a live
-> PostgreSQL + Redis and the frontend under `next start` against that
-> backend, driving the real register → login → create-organization flow
-> over HTTP. Actually building the Docker images was not possible in the
-> environment this was built in (Docker Hub pulls are blocked by that
-> sandbox's network policy — see `docs/roadmap.md`); verify the
-> `docker compose up --build` path in a normal environment before relying
-> on it, though the CI workflow itself never pulls from Docker Hub, so it is
-> unaffected.
+**Verified end to end for 0.1.0**, running the API, a Celery worker and the demo
+lab directly (not under Docker):
+
+```
+run WITHOUT authorization        409  <- refused, as designed
+run status                       completed
+scan results                     10 results, 10 distinct codes
+findings                         7
+download report markdown/sarif/json  200
+evidence chain verify            ok=True
+```
+
+The lab's planted AWS key and both static tokens appear in none of the three
+report formats.
+
+> **Docker is unverified.** The environment this was built in blocks Docker Hub
+> blob downloads at the proxy (HTTP 403 from the registry CDN), so the images
+> could not be pulled and `docker compose up --build` has never actually run.
+> The compose file and Dockerfiles are written and reviewed but unexercised. The
+> direct-run path below *is* verified.
 
 ### Local development without Docker
 
@@ -176,6 +191,42 @@ JWT revocation. See `docs/roadmap.md` for the complete list.
 - [`docs/BUILD_SPEC.md`](docs/BUILD_SPEC.md) — the full, unified build
   specification (mission, safety policy, architecture, domain model, probe
   catalogue, risk scoring, reporting, phased plan, definition of done).
+- [`docs/installation.md`](docs/installation.md) — install, quickstart, and
+  what was verified for this release.
+- [`docs/architecture.md`](docs/architecture.md) — shape, packages, and the
+  decisions worth knowing.
+- [`docs/authorization-and-scope.md`](docs/authorization-and-scope.md) — the
+  safety model in full. Read this one if you read only one.
+- [`docs/configuration.md`](docs/configuration.md) — every environment
+  variable, and why credentials are held by reference.
+- [`docs/authentication.md`](docs/authentication.md) and
+  [`docs/rbac.md`](docs/rbac.md) — passwords, tokens, API keys, the role ladder.
+- [`docs/scanning.md`](docs/scanning.md) — running a scan, what it needs, and
+  the run lifecycle.
+- [`docs/ai-security-testing.md`](docs/ai-security-testing.md) and
+  [`docs/api-security-testing.md`](docs/api-security-testing.md) — what each
+  engine tests, and what it does not.
+- [`docs/detection-methodology.md`](docs/detection-methodology.md) — trials,
+  baselines, Wilson intervals, fingerprints, and what a claim is worth.
+- [`docs/risk-model.md`](docs/risk-model.md) — every number in the scoring
+  tables.
+- [`docs/reporting.md`](docs/reporting.md) — formats, audiences, redaction and
+  access control.
+- [`docs/frameworks.md`](docs/frameworks.md) — pinned editions with retrieval
+  dates, and why CWE carries no version.
+- [`docs/limitations.md`](docs/limitations.md) — what this cannot detect, and
+  where false positives cluster.
+- [`docs/comparison.md`](docs/comparison.md) — honest positioning against
+  garak, PyRIT, promptfoo, DeepTeam, Aikido and ZAP, including where they win.
+- [`docs/threat-model.md`](docs/threat-model.md) and
+  [`docs/security-model.md`](docs/security-model.md) — who might attack this,
+  and what holds.
+- [`docs/acceptable-use.md`](docs/acceptable-use.md) — the authorization rule,
+  stated plainly.
+- [`docs/deployment.md`](docs/deployment.md) and
+  [`docs/troubleshooting.md`](docs/troubleshooting.md).
+- [`docs/third-party.md`](docs/third-party.md) — every integrated tool, its
+  licence and how it is used.
 - [`docs/decisions/`](docs/decisions/) — architecture decision records.
 - [`docs/plugin-development.md`](docs/plugin-development.md) — writing a
   plugin, what the platform guarantees it, and what it explicitly does not
@@ -196,6 +247,17 @@ JWT revocation. See `docs/roadmap.md` for the complete list.
   unstable finding.
 - [`docs/roadmap.md`](docs/roadmap.md) — what's built, what's deferred, and
   why.
+
+## Contributing and security
+
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — setup, the checks that must pass, and
+  the eight rules that are not negotiable.
+- [`SECURITY.md`](SECURITY.md) — reporting a vulnerability privately, and what
+  is in and out of scope.
+- [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
+- [`CHANGELOG.md`](CHANGELOG.md)
+- [`docs/acceptable-use.md`](docs/acceptable-use.md) — **read this before
+  pointing the tool at anything.**
 
 ## License
 

@@ -279,11 +279,51 @@ def test_mappings_are_grouped_by_framework_and_never_guessed() -> None:
     assert grouped["other"] == ["SOMETHING-ELSE"]
 
 
-def test_mapping_versions_are_empty_until_verified() -> None:
-    """§3.4 requires each mapping to cite a pinned version. An unverified
-    version string implies a check nobody performed."""
+def test_every_mapping_cites_a_pinned_version_and_date() -> None:
+    """§3.4 and §27: a mapping must cite the edition it was made against.
+
+    This test previously asserted `mapping_versions == {}` — an honest
+    placeholder, because an unverified version string implies a check nobody
+    performed. `app/core/findings/frameworks.py` now supplies the pinned
+    editions, so the stronger property holds: every framework the finding maps
+    to carries a version and a retrieval date.
+    """
     draft = build_finding(
         _result(), exposure=Exposure.INTERNET_UNAUTHENTICATED, environment=Environment.PRODUCTION
     )
 
-    assert draft.mapping_versions == {}
+    assert draft.mappings, "the fixture should carry framework references"
+    for key, references in draft.mappings.items():
+        if key == "cwe":
+            # Deliberately unversioned: CWE identifiers are stable across
+            # MITRE's releases, and pinning a "version" would imply a
+            # precision that does not exist.
+            assert key not in draft.mapping_versions
+            continue
+        assert references
+        assert key in draft.mapping_versions, key
+        assert "retrieved" in draft.mapping_versions[key]
+
+
+def test_a_framework_with_no_references_is_not_claimed() -> None:
+    """A finding must not state it was assessed against a framework it carries
+    no reference for."""
+    from app.core.findings.frameworks import versions_for
+
+    assert versions_for({"owasp_api_2023": []}) == {}
+    assert versions_for({"not_a_framework": ["X1"]}) == {}
+
+
+def test_no_framework_version_is_invented() -> None:
+    """Every pinned entry names a real source and a real date, and the table is
+    the only place a version may come from."""
+    from datetime import date
+
+    from app.core.findings.frameworks import FRAMEWORKS
+
+    for key, entry in FRAMEWORKS.items():
+        assert entry.version, key
+        assert entry.source, key
+        # Parses, so a typo in a date is a failure rather than a string nobody
+        # checked.
+        date.fromisoformat(entry.retrieved)

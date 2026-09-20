@@ -1173,6 +1173,83 @@ See `docs/BUILD_SPEC.md` §26 for the full phase plan. Remaining: Phase 13
 18 (RASP extension points) — and the integrations and Aikido-parity engines
 described in the next section.
 
+## Phase 13: documentation and release (done)
+
+The §25 documentation set, and a v0.1.0 release prepared. The acceptance
+criterion was behavioural rather than editorial — *"a fresh clone, following the
+quickstart verbatim, reaches a scanned demo lab and a downloaded report"* — so
+the quickstart was executed rather than written from memory.
+
+**What the verification produced**, against a fresh database, the real Celery
+worker, the real scope engine and the lab on a real socket:
+
+```
+run WITHOUT authorization        409  <- refused, as designed
+run status                       completed
+scan results                     10 results, 10 distinct codes
+   AEGIS-AI-000, AEGIS-AI-020, AEGIS-AI-900, AEGIS-API-002, AEGIS-API-010,
+   AEGIS-API-011, AEGIS-API-013, AEGIS-API-020, AEGIS-API-021, AEGIS-API-050
+findings                         7
+download report markdown/sarif/json  200
+evidence chain verify            ok=True
+```
+
+The script that did it is committed as `docs/examples/quickstart.py`, so the
+documentation and the thing that proved it cannot drift apart. It was then run
+again from its committed form to confirm the shipped artifact works.
+
+**Two things the verification found, both now documented:**
+
+- *A scan without an uploaded OpenAPI document finds very little.* The first
+  run produced 5 results; uploading the lab's own `/openapi.json` took it to 10.
+  Not a bug — the API probes derive their surface from the document — but a
+  reader following a quickstart that omitted the step would have concluded the
+  target was nearly clean. It is now a step in the quickstart and the first
+  entry in `docs/troubleshooting.md`.
+- *Credential variables must be in the **worker's** environment, not the API's.*
+  Synthetic accounts are stored by variable name, and the process that resolves
+  a name is the one that makes the request. With them exported only in the API
+  shell, BOLA (`AEGIS-API-050`) silently did not appear: 6 findings instead of
+  7. The run still completed and the coverage section still said what was not
+  tested, so nothing lied — but it cost a re-run to notice, and it is now called
+  out in three places.
+
+**A definition-of-done item closed rather than documented as a gap.** §27
+requires every framework mapping to be traceable to a pinned upstream version
+with a retrieval date. `mapping_versions` was plumbed all the way to the report
+but never populated — and a test, `test_mapping_versions_are_empty_until_verified`,
+asserted the emptiness *deliberately*, on the grounds that an unverified version
+string implies a check nobody performed. That was the right call at the time.
+`app/core/findings/frameworks.py` now supplies the pinned editions with
+retrieval dates, normalization derives each finding's versions from the mappings
+actually present, and the placeholder test is replaced by three stronger ones:
+every non-CWE mapping cites a version and a date, a framework with no references
+is never claimed, and no entry carries an invented version or an unparseable
+date. Verified in a live report, not only in a unit test.
+
+CWE remains deliberately unversioned, and a test pins that too — CWE identifiers
+are stable across MITRE's releases in a way the others are not, and a "CWE
+version" would imply a precision that does not exist.
+
+**Deferrals, stated rather than hidden:**
+
+- **No v0.1.0 tag is pushed.** The release notes, CHANGELOG and documentation
+  are ready, but tagging is an outward-facing, hard-to-undo act and this work
+  lives on a feature branch. A `v0.1.0` tag belongs on the merge commit on the
+  default branch, and that is the repository owner's call.
+- **`docker compose up --build` is still unverified.** Docker Hub blob
+  downloads are blocked at this environment's proxy (HTTP 403 from the registry
+  CDN); that is a policy denial, not a transient error, so it was reported
+  rather than retried. Stated in the README, `docs/installation.md` and the
+  CHANGELOG rather than left for a reader to discover.
+- **No Sigstore signing and no `release.yml`.** Both need a release process on
+  a default branch to attach to.
+- **No ML-BOM.** The CycloneDX SBOM covers software components only.
+- **`docs/cicd.md` keeps its name** rather than the spec's `docs/ci-cd.md`;
+  renaming would break existing links for no benefit.
+
+---
+
 ## Requested after Phase 12: integrations and Aikido-parity scanning
 
 Asked for directly: outbound integrations (mail, Slack, Teams) and repository

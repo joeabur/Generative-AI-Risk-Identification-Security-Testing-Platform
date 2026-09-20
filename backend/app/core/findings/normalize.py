@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.core.findings.fingerprint import fingerprint
+from app.core.findings.frameworks import versions_for
 from app.core.probes.models import Category, Confidence, ScanResult, Severity
 from app.core.risk.model import (
     Environment,
@@ -182,7 +183,13 @@ def build_finding(
         mappings=group_mappings(result.frameworks),
         # Empty until §3.4's ingestion runs. An unverified version string is
         # worse than none: it implies a check nobody performed.
-        mapping_versions=mapping_versions or {},
+        # Derived from the mappings actually present, so a finding cannot
+        # claim a framework edition it carries no reference for. An explicit
+        # argument still wins, for a caller importing findings that were
+        # mapped against a different edition elsewhere.
+        mapping_versions=mapping_versions
+        if mapping_versions is not None
+        else versions_for(group_mappings(result.frameworks)),
         # Whatever the run stored for this result, if anything. Never a
         # placeholder: a finding that points at a bundle which does not exist
         # is worse than one that admits it has none.

@@ -156,6 +156,21 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
 
+  lab-web-app:
+    profiles: [demo]
+    build:
+      context: ./demo-target
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["web-app"]
+    environment:
+      LAB_HOST: 0.0.0.0
+    networks: [lab_net]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
   lab-collaborator:
     profiles: [demo]
     build:

@@ -5,8 +5,9 @@ run it. It states what the controls are, how each one was verified, and what is
 deliberately not covered. Where a control is weaker than it might appear, that
 is said here rather than left to be discovered.
 
-Reviewed at commit on branch `claude/ai-risk-security-platform-vc1nch`;
-668 tests passing at the time of writing.
+Reviewed on branch `claude/ai-risk-security-platform-vc1nch`, through Phase 15.
+The test count moves with every phase; `docs/roadmap.md` records what each one
+added and what it deliberately left out.
 
 ## What this thing is, and why that matters
 
@@ -190,3 +191,34 @@ semgrep --config app/core/appsec/sast/rules --error app aegis_cli
 bandit -r app aegis_cli -ll
 detect-secrets-hook --baseline .secrets.baseline $(git ls-files)
 ```
+
+## Phase 15 additions: DAST
+
+Two new controls, and one new gap stated plainly.
+
+**Pre-queue scope checking.** The crawler checks a discovered URL through the
+scope engine before it enters the queue, not before it is fetched. This is
+stronger than the phase required, and the reasoning is in `docs/dast.md`. The
+test asserts on the queue rather than on requests made, and was verified by
+replacing the check with "queue everything" and watching it fail.
+
+**Template policy derived from the rules of engagement.** Destructive Nuclei
+tags and ZAP's active scan are unreachable unless `allow_state_mutation` is set.
+Out-of-band callback templates are excluded even then, with `-no-interactsh`
+passed as well so the tag exclusion is not a single point of failure. Verified
+by weakening the policy to include the mutating tags unconditionally.
+
+**The gap: the scanner adapters are not scope-gated at the socket.** Nuclei and
+ZAP open their own connections. This is the weakest point in the phase.
+
+- *Nuclei* is handed explicit `-target` URLs, each of which passed the scope
+  engine during the crawl, and is not asked to discover more. It runs offline
+  (`-disable-update-check`) and at the RoE's rate limit.
+- *ZAP* spiders on its own and cannot be bounded that way. It therefore runs
+  only when the rules of engagement name exactly one concrete host, and emits a
+  visible `not tested` marker otherwise. Its report is written to a temporary
+  directory and removed, because it contains response excerpts from the target.
+
+If this platform grows a requirement that *all* outbound traffic be observable,
+these two adapters are what would have to change — most likely by running them
+behind a local proxy this platform controls, which is not built.

@@ -40,7 +40,10 @@ class NetworkUse(StrEnum):
 @dataclass(frozen=True)
 class ToolInvocation:
     command: tuple[str, ...]
-    cwd: Path
+    # `None` for a tool that has no meaningful working directory — a network
+    # scanner reads no files from the checkout, and inventing a cwd for it would
+    # suggest it does.
+    cwd: Path | None
     network: NetworkUse
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS
     # Extra environment for this call only; the parent environment is passed
@@ -104,7 +107,7 @@ async def run_tool(invocation: ToolInvocation) -> ToolResult:
     try:
         process = await asyncio.create_subprocess_exec(
             *invocation.command,
-            cwd=str(invocation.cwd),
+            cwd=str(invocation.cwd) if invocation.cwd is not None else None,
             env=tool_environment(invocation.env),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

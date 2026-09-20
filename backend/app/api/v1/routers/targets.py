@@ -201,6 +201,7 @@ async def set_rules_of_engagement(
     record.forbidden_headers = list(roe.forbidden_headers)
     record.budgets = budgets_dict
     record.safe_mode = roe.safe_mode
+    record.allow_state_mutation = roe.allow_state_mutation
     record.blackout_windows = blackout_dicts
     await db.flush()
 

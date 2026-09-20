@@ -11,7 +11,7 @@ engine, determinism/ASR methodology, domain model, and the phased build
 plan — lives in **[`docs/BUILD_SPEC.md`](docs/BUILD_SPEC.md)**. Read that
 first; this README is the practical "how do I run it" companion.
 
-**Current status: v0.1.0 — Phases 1–14 and 16 complete.** What works end to
+**Current status: v0.1.0 — Phases 1–16 complete.** What works end to
 end today: the scope/authorization engine and its gated transport (the single
 outbound control point), target adapters and OpenAPI discovery, run
 orchestration with cancellation and live progress, 16 API probes, 11 AI
@@ -43,8 +43,8 @@ There is an isolated, intentionally vulnerable demo lab in
 [`demo-target/`](demo-target/), and a self-review of the platform's own
 controls in [`docs/security-review.md`](docs/security-review.md).
 
-Still to come: DAST with a scope-gated crawler (Phase 15), the workflow engine
-and HTMX dashboard (17), and RASP extension points (18) — the shipped frontend
+Still to come: the workflow engine and HTMX dashboard (Phase 17), and RASP
+extension points (18) — the shipped frontend
 is still the auth scaffold only. [`docs/roadmap.md`](docs/roadmap.md) records
 exactly what's built versus deferred, and why, phase by phase;
 [`docs/limitations.md`](docs/limitations.md) says what the tool cannot detect
@@ -235,6 +235,9 @@ JWT revocation. See `docs/roadmap.md` for the complete list.
   platform's own controls: how each was verified, and what is not covered.
 - [`docs/pull-requests.md`](docs/pull-requests.md) — posting findings to a
   pull request: what that layer cannot do and how each boundary is enforced.
+- [`docs/dast.md`](docs/dast.md) — the scope-gated crawler: why a discovered
+  URL is checked before it is queued rather than before it is fetched, and what
+  the scanner adapters cannot guarantee.
 - [`docs/supply-chain.md`](docs/supply-chain.md) — end-of-life runtimes,
   licence obligations, name confusion and container scanning: why each exists
   where no CVE does, and what each deliberately does not claim.

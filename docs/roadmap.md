@@ -1173,6 +1173,87 @@ See `docs/BUILD_SPEC.md` §26 for the full phase plan. Remaining: Phase 13
 18 (RASP extension points) — and the integrations and Aikido-parity engines
 described in the next section.
 
+## Phase 15: DAST (done)
+
+`docs/dast.md` is the reference. A scope-gated crawler for `kind: web_app`, plus
+Nuclei and ZAP adapters whose template and scan-mode policy is derived from the
+rules of engagement.
+
+**The design decision this phase turns on.** The acceptance criterion is that a
+crawl never *fetches* an out-of-scope URL discovered mid-crawl. The obvious
+implementation satisfies that by accident — queue everything, let
+`GatedTransport` refuse the bad ones later. This does not do that. A discovered
+URL is checked **before it enters the queue**, because:
+
+- a queue of out-of-scope URLs is itself a defect: anything that later iterates
+  the crawl's state (a retry, a progress view, a future adapter handed "the
+  discovered URLs") reaches them;
+- "it would have been refused later" is not testable — an assertion about
+  requests passes whether the check is early or late, while an assertion about
+  the *queue* only passes when it is early;
+- budget is finite, and a site linking to a thousand external URLs should not
+  spend the run discovering they are all out of scope.
+
+Both are proved by deliberately weakening the control: replacing the pre-queue
+check with "queue everything" fails
+`test_an_out_of_scope_url_discovered_mid_crawl_is_never_queued`, and including
+the mutating tags unconditionally fails
+`test_the_default_policy_excludes_every_mutating_tag`.
+
+**A distinction that was wrong at first and is now explicit.** Refused,
+deferred, and unvisited are three different things. Budget says "not now"; scope
+says "not ever". The first implementation filed a budget refusal under
+`refused`, which tells a reader the engagement did not cover an in-scope URL —
+a different and wrong claim. In-scope URLs are now queued regardless of budget
+and surface in `unvisited`, reported as `AEGIS-DAST-009`. A related off-by-one:
+the page popped from the queue when budget ran out was lost from `unvisited`,
+understating coverage by exactly one page; it is put back before the break.
+
+**`allow_state_mutation`** is new on the rules of engagement (migration
+`e4b1c6d83a29`), defaults to false, and is deliberately separate from
+`safe_mode`: safe mode bounds how a probe behaves, this decides whether
+state-changing tooling may run at all. The crawler never submits a form under
+either setting — a test greps the module to confirm no code path sends anything
+but `GET`. What the flag opens is the tool policy: Nuclei's intrusive tags and
+ZAP's active script.
+
+Out-of-band callback templates (`oast`, `interactsh`, `blind`) are excluded
+**even with state mutation allowed**. They make the target contact a third-party
+server the engagement never authorized, which is a separate decision from "may
+state change" and one this platform has not built the infrastructure for.
+
+**The honest limit of this phase.** Neither Nuclei nor ZAP is routed through
+`GatedTransport` — they open their own sockets. Nuclei is mitigated by being
+handed explicit `-target` URLs that each passed the scope engine at crawl time.
+ZAP spiders on its own and cannot be bounded that way, so it runs only when the
+rules of engagement name exactly one concrete host and declines with a visible
+`not tested` marker otherwise. Recorded in `docs/security-review.md` too.
+
+**One thing the existing tests caught.** Adding `web-app` to the lab's entry
+point without adding it to `docker-compose.yml` failed
+`test_every_service_the_entry_point_offers_is_in_the_compose_file` — a Phase 12
+test written for exactly this drift. The compose service was added with the same
+isolation properties as the rest (internal network, no published ports,
+read-only, `cap_drop: ALL`), and because those assertions iterate `LAB_SERVICES`
+they now cover it too.
+
+**Deferrals, stated rather than hidden:**
+
+- **No JavaScript execution.** No headless browser, so a single-page
+  application's routes are invisible to the crawler. This is the largest gap in
+  the phase.
+- **No authenticated crawling** — no login sequence, no session handling.
+- **No form submission at all**, even with `allow_state_mutation`.
+- **Nuclei and ZAP are not installed in CI**, so their output parsing is
+  exercised against fixtures and their absence against the `not tested` path.
+  Nothing in CI runs a real scanner against a real site.
+- **No ZAP daemon mode**, so no context configuration or session reuse.
+- **Link extraction is a bounded regex, not an HTML parser** — deliberately, as
+  the input is an adversarial response body, but it misses links a browser
+  would find.
+
+---
+
 ## Phase 13: documentation and release (done)
 
 The §25 documentation set, and a v0.1.0 release prepared. The acceptance

@@ -30,6 +30,9 @@ class TargetKind(enum.StrEnum):
     API = "api"
     MCP_SERVER = "mcp_server"
     MODEL_ENDPOINT = "model_endpoint"
+    # Added by Addendum v2.1 §4.2 for classic DAST targets: a web application
+    # with no AI layer, tested by crawling and by third-party scanners.
+    WEB_APP = "web_app"
 
 
 class Target(UUIDPrimaryKeyMixin, TimestampMixin, Base):

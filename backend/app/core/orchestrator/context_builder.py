@@ -71,6 +71,7 @@ def build_run_context(target: Target) -> RunContext:
             "forbidden_headers": roe_row.forbidden_headers,
             "budgets": roe_row.budgets,
             "safe_mode": roe_row.safe_mode,
+            "allow_state_mutation": roe_row.allow_state_mutation,
             "blackout_windows": roe_row.blackout_windows,
         }
     )

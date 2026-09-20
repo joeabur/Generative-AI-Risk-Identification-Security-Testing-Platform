@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import JSON, Boolean, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.sql import expression
 
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
@@ -35,6 +36,13 @@ class RulesOfEngagementRecord(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     forbidden_headers: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     budgets: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     safe_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Separate from `safe_mode` on purpose: safe mode bounds how a probe
+    # behaves, this decides whether state-changing tooling may run at all.
+    # Default false, so a DAST run is non-destructive unless someone said
+    # otherwise in writing.
+    allow_state_mutation: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=expression.false()
+    )
     blackout_windows: Mapped[list[dict[str, Any]]] = mapped_column(
         JSON, nullable=False, default=list
     )

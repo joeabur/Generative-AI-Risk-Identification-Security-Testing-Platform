@@ -16,6 +16,7 @@ SERVICES = {
     "vulnerable-ai-app": ("lab.vulnerable_ai_app.app", 8081),
     "content-server": ("lab.content_server.app", 8082),
     "collaborator": ("lab.collaborator.app", 8083),
+    "web-app": ("lab.web_app.app", 8084),
 }
 
 

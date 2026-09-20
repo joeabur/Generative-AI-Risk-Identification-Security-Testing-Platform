@@ -25,6 +25,11 @@ class Pillar(StrEnum):
     SCA = "sca"
     SECRETS = "secrets"
     IAC = "iac"
+    # Added in Phase 15. A DAST engine tests a running application rather than
+    # a checkout, so it does not take a `Workspace` — but it produces the same
+    # `ScanResult` shape and the same "not tested" marker, which is the part
+    # that matters for one report and one normalization path.
+    DAST = "dast"
 
 
 @dataclass(frozen=True)

@@ -43,7 +43,12 @@ from lab.vulnerable_ai_app.app import DECLARED_TOOLS, seeded_flaws  # noqa: E402
 from lab.vulnerable_ai_app.app import create_app as vulnerable_app  # noqa: E402
 
 COMPOSE = yaml.safe_load((LAB_ROOT.parent / "docker-compose.yml").read_text(encoding="utf-8"))
-LAB_SERVICES = ("lab-vulnerable-ai-app", "lab-content-server", "lab-collaborator")
+LAB_SERVICES = (
+    "lab-vulnerable-ai-app",
+    "lab-content-server",
+    "lab-collaborator",
+    "lab-web-app",
+)
 
 
 def _client(app_factory) -> AsyncClient:

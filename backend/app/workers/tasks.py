@@ -28,6 +28,7 @@ from app.core.appsec.checkout import (
 from app.core.appsec.registry import appsec_engines
 from app.core.appsec.workspace import CodeScopeError
 from app.core.config import get_settings
+from app.core.dast.contract import DastTarget
 from app.core.evidence.store import EvidenceError, EvidenceStore
 from app.core.findings.service import promote_run_results
 from app.core.orchestrator.ai_check import AiSecurityCheck
@@ -40,6 +41,7 @@ from app.core.orchestrator.context_builder import (
     build_run_context,
     build_workspace,
 )
+from app.core.orchestrator.dast_check import DastCheck
 from app.core.orchestrator.plugin_check import PluginCheck
 from app.core.orchestrator.probe_check import ProbeCheck
 from app.core.orchestrator.runner import RunEventPayload, execute_run
@@ -61,7 +63,7 @@ from app.models.retest import RetestVerdict
 from app.models.scan_result import ScanResultRecord
 from app.models.surface_endpoint import SurfaceEndpoint
 from app.models.synthetic_account import SyntheticAccount
-from app.models.target import Target
+from app.models.target import Target, TargetKind
 from app.plugins.allowlist import policy_from_settings
 from app.plugins.contract import PluginKind
 from app.plugins.registry import discover
@@ -236,6 +238,24 @@ async def execute_assessment_run(
             )
             checks.append(ai_check)
 
+        # DAST runs only for `kind: web_app`. Not for every HTTP target: a
+        # crawler follows links the *application* chooses, and turning that on
+        # for an API or an LLM app whose owner authorized a bounded, spec-driven
+        # assessment would widen the scan beyond what they agreed to. Declaring
+        # the kind is how the operator says "this is a site, crawl it".
+        dast_check: DastCheck | None = None
+        if target.kind is TargetKind.WEB_APP:
+            dast_check = DastCheck(
+                target=DastTarget(
+                    seed_url=target.base_url,
+                    # Read from the rules of engagement, never from the run
+                    # request: whether state may change is an authorization
+                    # decision, not a per-run option.
+                    allow_state_mutation=ctx.roe.allow_state_mutation,
+                )
+            )
+            checks.append(dast_check)
+
         # The code engines need a checkout. It is created here and removed in
         # the `finally` below whatever happens: a working copy of a client's
         # repository is precisely what must not be left on a worker, since it
@@ -323,6 +343,8 @@ async def execute_assessment_run(
             all_results.extend(ai_check.scan_results)
         if code_check is not None:
             all_results.extend(code_check.scan_results)
+        if dast_check is not None:
+            all_results.extend(dast_check.scan_results)
         if plugin_check is not None:
             all_results.extend(plugin_check.scan_results)
         await _persist_scan_results(db, run.id, run.organization_id, all_results)

@@ -76,5 +76,9 @@ class ScanResultRead(BaseModel):
     frameworks: list[str]
     reproduction: list[str]
     fingerprint: str | None
+    # The digest of this result's sealed evidence bundle, where the engine
+    # produced one. Null for a result read from configuration or a
+    # specification, which observed nothing.
+    evidence_ref: str | None
     measurement: dict[str, Any] | None
     stability: str | None

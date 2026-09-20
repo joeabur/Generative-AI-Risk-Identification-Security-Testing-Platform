@@ -21,6 +21,11 @@ os.environ.setdefault("JWT_SECRET", "test-only-secret-do-not-use-elsewhere")
 os.environ.setdefault(
     "EVIDENCE_ROOT", str(pathlib.Path(tempfile.gettempdir()) / "aegis-test-evidence")
 )
+# The demo lab's static tokens, supplied the way a real engagement supplies
+# credentials: by environment-variable name. They authenticate nothing outside
+# the lab and are printed in demo-target/README.md.
+os.environ.setdefault("AEGIS_LAB_ACME_TOKEN", "lab-token-acme-user")
+os.environ.setdefault("AEGIS_LAB_GLOBEX_TOKEN", "lab-token-globex-user")
 
 from app.api.v1.routers.targets import get_dns_resolver  # noqa: E402
 from app.core.config import get_settings  # noqa: E402

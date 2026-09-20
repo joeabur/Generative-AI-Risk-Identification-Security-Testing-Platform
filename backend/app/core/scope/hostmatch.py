@@ -17,9 +17,19 @@ _BLOCKED_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (
     ipaddress.ip_network("fc00::/7"),
 )
 
-# Cloud metadata endpoints — always blocked unless explicitly allowlisted,
-# even though some (169.254.169.254) already fall inside a blocked network
-# above; kept as an explicit, named set per docs/BUILD_SPEC.md §6.2.
+# Cloud metadata endpoints. Blocked **unconditionally**: unlike the private
+# ranges below, these cannot be re-enabled with `allowed_ip_ranges`.
+#
+# The private ranges are overridable because reaching them is a legitimate
+# thing an operator may authorize — a staging host on an internal network, or
+# the demo lab on an internal Docker network, both live there. The metadata
+# endpoint is different in kind. It is not a target; it is the thing that hands
+# out the credentials of the machine this platform runs on. A tool that will
+# fetch an arbitrary URL for its caller is SSRF-shaped by design
+# (docs/threat-model.md), and the one URL that turns that shape into a
+# compromise of the platform's own host is this one. No engagement needs it,
+# and leaving it behind a configuration flag means one mistyped allowlist is
+# the difference between a scanner and a credential thief.
 _METADATA_IPS: frozenset[ipaddress.IPv4Address | ipaddress.IPv6Address] = frozenset(
     {
         ipaddress.ip_address("169.254.169.254"),
@@ -72,9 +82,17 @@ def is_blocked_ip(
     ip: ipaddress.IPv4Address | ipaddress.IPv6Address,
     allowed_ranges: Sequence[ipaddress.IPv4Network | ipaddress.IPv6Network],
 ) -> bool:
-    is_sensitive = ip in _METADATA_IPS or any(ip in net for net in _BLOCKED_NETWORKS)
-    if not is_sensitive:
+    # Checked first and never excused: see `_METADATA_IPS`.
+    if ip in _METADATA_IPS:
+        return True
+
+    if not any(ip in net for net in _BLOCKED_NETWORKS):
         return False
+
+    # A private or loopback address an operator deliberately listed. Reaching
+    # one is a real engagement — an internal staging host, or the demo lab on
+    # its internal network — so the allowlist may permit it. A range broad
+    # enough to swallow a metadata address still does not permit that one.
     return not any(ip in net for net in allowed_ranges)
 
 

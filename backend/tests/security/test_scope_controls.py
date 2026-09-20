@@ -136,6 +136,48 @@ async def test_cloud_metadata_ip_blocked(fake_dns: FakeDnsResolver) -> None:
 
 
 @pytest.mark.parametrize(
+    "allowed_range",
+    ["169.254.169.254/32", "169.254.0.0/16", "0.0.0.0/0"],
+)
+async def test_a_cloud_metadata_ip_cannot_be_allowlisted(
+    fake_dns: FakeDnsResolver, allowed_range: str
+) -> None:
+    """The one address no configuration may permit.
+
+    Private ranges are overridable on purpose — an internal staging host and
+    the demo lab on its internal network both live there. The metadata endpoint
+    is different in kind: it is not a target, it is what hands out the
+    credentials of the machine this platform runs on. A tool that fetches an
+    arbitrary URL for its caller is SSRF-shaped by design, and this is the one
+    URL that turns that shape into a compromise of its own host — so one
+    mistyped allowlist must not be the difference.
+    """
+    engine = ScopeEngine()
+    ctx = make_context(roe=make_roe(allowed_ip_ranges=(allowed_range,)))
+    fake_dns.set("ai.example.test", ["169.254.169.254"])
+
+    decision = await _check(engine, ctx, fake_dns, url="https://ai.example.test/api")
+
+    assert decision.allowed is False
+    assert decision.rule == "blocked_ip"
+
+
+async def test_a_private_range_can_be_allowlisted_deliberately(
+    fake_dns: FakeDnsResolver,
+) -> None:
+    """The counterpart, and the reason the metadata rule has to be separate:
+    an operator scanning an internal host or the demo lab on its internal
+    Docker network is doing something legitimate."""
+    engine = ScopeEngine()
+    ctx = make_context(roe=make_roe(allowed_ip_ranges=("172.20.0.0/16",)))
+    fake_dns.set("ai.example.test", ["172.20.0.5"])
+
+    decision = await _check(engine, ctx, fake_dns, url="https://ai.example.test/api")
+
+    assert decision.allowed is True
+
+
+@pytest.mark.parametrize(
     "blocked_ip",
     ["127.0.0.1", "10.1.2.3", "172.16.0.4", "192.168.1.1", "169.254.1.1", "::1", "fd00::1"],
 )

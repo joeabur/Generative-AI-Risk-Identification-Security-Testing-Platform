@@ -105,6 +105,11 @@ concurrency = ["greenlet", "thread"]
 source = ["app"]
 
 [tool.pytest.ini_options]
+markers = [
+    # The only tests that reach a real socket. Selected on their own by
+    # .github/workflows/lab-e2e.yml.
+    "lab_e2e: a real assessment against the demo target lab over real HTTP",
+]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"

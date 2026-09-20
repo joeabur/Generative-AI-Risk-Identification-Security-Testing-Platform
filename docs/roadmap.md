@@ -1088,8 +1088,108 @@ Deferred out of Phase 11, with reasons:
   the worker; it is not clear anyone wants that, and guessing would add a
   column that has to be maintained forever.
 
+## Phase 12 — demo lab & hardening (done)
+
+`demo-target/` runs three services on a network with no route off the host, an
+authorization pass walks the real route table, and `docs/security-review.md`
+states what is covered and what is not.
+
+Decisions worth stating:
+
+- **Isolation is enforced in code, not described in a README.** The lab refuses
+  to start if any of thirteen provider-credential variables is set, binds
+  loopback unless `LAB_HOST` says otherwise, uses a stub with no HTTP library,
+  and prints a banner. Each is a test. The credential check matters most: this
+  app follows injected instructions and renders model output as HTML, so
+  pointed at a real model with a real key, a prompt-injection demo becomes a
+  bill or an exfiltration path into somebody's actual account. `env_file` is
+  deliberately absent from the compose services so the project's own `.env`
+  cannot supply one.
+- **`internal: true`, and no published ports.** Docker attaches no gateway to
+  `lab_net`, so the lab reaches nothing and nothing reaches it; the worker joins
+  that network as well as the default one, which is how the scanner reaches the
+  lab while the lab reaches nothing. A vulnerable app on a host port is a
+  vulnerable app on somebody's network.
+- **The authorization pass enumerates routes rather than reading a list.** For
+  every organization-scoped route it asserts a declared minimum role, 401
+  unauthenticated, 404 (not 403) to a non-member, and 403 below the declared
+  role. A new endpoint cannot join the API without RBAC, because nothing has to
+  remember to add it.
+- **The route→role table is pinned.** Found by breaking it: downgrading a route
+  from analyst to viewer passed every other assertion, because a weakened route
+  enforces its weaker declaration perfectly well. A privilege change now has to
+  be deliberate, where a reviewer sees it.
+- **Cloud metadata endpoints can no longer be allowlisted.** This came out of
+  thinking through how the worker reaches a lab on a private network. Private
+  ranges are overridable on purpose — an internal staging host and the lab both
+  live there — but `169.254.169.254` is not a target, it is what hands out the
+  credentials of the machine this platform runs on. Until this change a wide
+  `allowed_ip_ranges` would have permitted it. Tested with allowlists as broad
+  as `0.0.0.0/0`.
+- **`lab-e2e.yml` runs the lab under uvicorn, not Docker.** The test then
+  exercises real sockets, real DNS and the real scope engine without CI needing
+  a container runtime — and it has to list `127.0.0.0/8` in the target's Rules
+  of Engagement, which is the same opt-in an operator makes for the Docker
+  network. The counterpart test empties that list and asserts the run observes
+  nothing.
+- **The demo target is scanned on different terms from the products.** A HIGH
+  finding fails the build for the backend and worker images; the lab is scanned
+  for base-image and dependency problems only, because failing on its own
+  findings would be failing on the thing it was built to be.
+
+Two test-expectation bugs of my own, worth recording because both were wrong in
+the direction of a false pass:
+
+- the lab e2e asserted `AEGIS-API-001` (unauthenticated access). The lab *does*
+  require authentication on `/api/orders/{id}`; its flaw is skipping the
+  ownership check afterwards. The assertion now names `AEGIS-API-050` (BOLA),
+  which required configuring the lab's synthetic accounts — so the test now
+  exercises credentials-from-environment too.
+- the "no opt-in" test asserted zero reportable results, and two appeared. Both
+  were the analysis-only probes that read configuration and specification
+  without sending anything, so their presence is not evidence of a bypass. The
+  assertion now excludes them by name and adds the stronger check: no result
+  carries an evidence reference, because nothing was observed.
+
+Deferred out of Phase 12, with reasons:
+
+- **No Sigstore signing and no `release.yml`.** Signing is only meaningful with
+  a release process to attach it to, and that is Phase 13.
+- **`framework-drift.yml` absent.** It needs the pinned framework corpus from
+  §3.4 that `mapping_versions` is still empty for; a weekly job checking
+  versions nothing records would report drift against nothing.
+- **`container.yml` is unverified here.** No container runtime in this
+  environment, so the workflow is written from the Trivy action's documented
+  interface and has not been seen to pass. Same honest position as the other
+  Docker-dependent paths.
+- **No ML-BOM.** §23 asks for one alongside the SBOM for lab models. The lab
+  uses a string-handling stub rather than a model, so there is nothing to
+  inventory — an ML-BOM listing no models would be a claim, not a document.
+
 ## Later phases
 
-See `docs/BUILD_SPEC.md` §26 for the full phase plan. Remaining: Phases 12–13
-(demo lab & hardening, documentation & release), plus Phase 15 (DAST), 17
-(workflows, dashboard) and 18 (RASP extension points).
+See `docs/BUILD_SPEC.md` §26 for the full phase plan. Remaining: Phase 13
+(documentation & release), plus Phase 15 (DAST), 17 (workflows, dashboard) and
+18 (RASP extension points) — and the integrations and Aikido-parity engines
+described in the next section.
+
+## Requested after Phase 12: integrations and Aikido-parity scanning
+
+Asked for directly: outbound integrations (mail, Slack, Teams) and repository
+scanning comparable to Aikido Security. Planned as vertical slices:
+
+1. **Integrations foundation** — channels, event types, delivery through the
+   platform-egress path the AI provider already uses (allowlist derived from
+   configuration, never from a parameter, so a notification channel cannot
+   become an SSRF primitive), HMAC signing, retry and dead-letter, redaction
+   before send, an audit event per delivery.
+2. **Slack, Teams, email and generic signed webhook** adapters, API, CLI.
+3. **Container image scanning**, **license risk** and **EOL runtime** detection.
+4. **Malware and typosquat signals** on dependencies — name similarity and
+   install-hook detection, with no invented advisory identifiers.
+5. **Repository and pull-request integration** — findings as review comments
+   and a check run.
+
+Deliberately out of scope, and recorded rather than half-built: cloud posture
+management, runtime protection, and any "autofix" that pushes a commit to a
+customer's repository.

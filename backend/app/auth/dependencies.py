@@ -144,4 +144,10 @@ def require_membership(
             )
         return membership
 
+    # Recorded on the closure so the authorization pass in
+    # `tests/security/test_authorization_matrix.py` can read every route's
+    # declared minimum role and prove that no organization-scoped endpoint
+    # exists without one. Introspection beats a hand-maintained list: a list
+    # is only as good as whoever remembered to update it.
+    dependency.minimum_role = minimum_role  # type: ignore[attr-defined]
     return dependency

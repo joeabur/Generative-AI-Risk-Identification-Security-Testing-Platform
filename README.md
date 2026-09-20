@@ -11,7 +11,7 @@ engine, determinism/ASR methodology, domain model, and the phased build
 plan — lives in **[`docs/BUILD_SPEC.md`](docs/BUILD_SPEC.md)**. Read that
 first; this README is the practical "how do I run it" companion.
 
-**Current status: through Phase 11, plus Phases 14–16.** What works end to
+**Current status: through Phase 12, plus Phases 14–16.** What works end to
 end today: the scope/authorization engine and its gated transport (the single
 outbound control point), target adapters and OpenAPI discovery, run
 orchestration with cancellation and live progress, 16 API probes, 11 AI
@@ -25,8 +25,12 @@ reproduced / not reproduced / not tested with the evidence from either side.
 There is also an `aegis-ai` CLI and a CI security gate with documented exit
 codes — see [`docs/cicd.md`](docs/cicd.md).
 
-Still to come: the demo lab (Phase 12), the release documentation (13),
-DAST (15), and the HTMX dashboard (17) — the shipped
+There is an isolated, intentionally vulnerable demo lab in
+[`demo-target/`](demo-target/), and a self-review of the platform's own
+controls in [`docs/security-review.md`](docs/security-review.md).
+
+Still to come: the release documentation (Phase 13), DAST (15), and the HTMX
+dashboard (17) — the shipped
 frontend is still the auth scaffold only. [`docs/roadmap.md`](docs/roadmap.md) records exactly
 what's built versus deferred, and why, phase by phase.
 
@@ -162,6 +166,8 @@ JWT revocation. See `docs/roadmap.md` for the complete list.
 - [`docs/plugin-development.md`](docs/plugin-development.md) — writing a
   plugin, what the platform guarantees it, and what it explicitly does not
   (there is no sandbox, and the allowlist is the control).
+- [`docs/security-review.md`](docs/security-review.md) — a self-review of the
+  platform's own controls: how each was verified, and what is not covered.
 - [`docs/cicd.md`](docs/cicd.md) — the `aegis-ai` CLI, API keys, and the CI
   security gate: its exit codes, and why it refuses to fail a build on an
   unstable finding.

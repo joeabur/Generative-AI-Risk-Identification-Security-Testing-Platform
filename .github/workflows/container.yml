@@ -1,0 +1,63 @@
+# Container image scanning (docs/BUILD_SPEC.md §23).
+#
+# Three images are built here and scanned on different terms. The backend and
+# worker are products: a HIGH finding fails the build. The demo target is
+# intentionally vulnerable — failing on its findings would be failing on the
+# thing it was built to be — so it is scanned for *base image and dependency*
+# problems only, which are not part of its seeded design.
+name: container
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "53 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  images:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            dockerfile: Dockerfile.backend
+            context: .
+            severity: "HIGH,CRITICAL"
+          - name: worker
+            dockerfile: Dockerfile.worker
+            context: .
+            severity: "HIGH,CRITICAL"
+          - name: demo-target
+            dockerfile: demo-target/Dockerfile
+            context: ./demo-target
+            # Only CRITICAL, and only in the base image and installed packages.
+            # The application's own flaws are the point of it.
+            severity: "CRITICAL"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build ${{ matrix.name }}
+        run: docker build -f ${{ matrix.dockerfile }} -t aegis-${{ matrix.name }}:ci ${{ matrix.context }}
+
+      - name: Trivy — vulnerabilities
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: aegis-${{ matrix.name }}:ci
+          severity: ${{ matrix.severity }}
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+      - name: Trivy — misconfiguration and secrets in the image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: aegis-${{ matrix.name }}:ci
+          scanners: misconfig,secret
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          format: table

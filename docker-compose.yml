@@ -76,6 +76,13 @@ services:
       EVIDENCE_ROOT: ${EVIDENCE_ROOT:-/var/lib/aegis/evidence}
     volumes:
       - evidence_data:/var/lib/aegis/evidence
+    # The worker is the only service that joins the lab network, because it is
+    # the only one that reaches a target. `lab_net` has no gateway, so joining
+    # it grants the worker reachability into the lab and no new reachability
+    # out of the host.
+    networks:
+      - default
+      - lab_net
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -95,9 +102,86 @@ services:
     depends_on:
       - backend
 
+  # --- demo target lab (docs/BUILD_SPEC.md §19, §2.4) --------------------
+  #
+  # Behind `--profile demo`, so `docker compose up` never starts an
+  # intentionally vulnerable application by accident. Bring it up with:
+  #
+  #     docker compose --profile demo up
+  #
+  # All three services sit on `lab_net`, which is declared `internal: true`:
+  # Docker attaches no gateway to it, so nothing on it can reach the internet
+  # and nothing on the internet can reach it. The worker joins that network as
+  # well as the default one, which is how the scanner reaches the lab while the
+  # lab reaches nothing.
+  #
+  # No ports are published. A vulnerable app on a host port is a vulnerable app
+  # on somebody's network; use `docker compose exec` or the platform itself.
+
+  lab-vulnerable-ai-app:
+    profiles: [demo]
+    build:
+      context: ./demo-target
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["vulnerable-ai-app"]
+    # Explicitly empty: the lab refuses to start if a provider credential is in
+    # its environment, and `env_file` is deliberately absent so the project's
+    # .env cannot leak one in.
+    environment:
+      LAB_HOST: 0.0.0.0
+    networks: [lab_net]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  lab-content-server:
+    profiles: [demo]
+    build:
+      context: ./demo-target
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["content-server"]
+    environment:
+      LAB_HOST: 0.0.0.0
+    networks: [lab_net]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+  lab-collaborator:
+    profiles: [demo]
+    build:
+      context: ./demo-target
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    command: ["collaborator"]
+    environment:
+      LAB_HOST: 0.0.0.0
+    networks: [lab_net]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
 volumes:
   postgres_data:
   # Evidence bundles and their manifests. Unencrypted by design and honestly
   # documented as such (docs/BUILD_SPEC.md §13, docs/roadmap.md): treat this
   # volume like a log of production traffic.
   evidence_data:
+
+networks:
+  # The demo lab's network. `internal: true` means Docker attaches no gateway:
+  # nothing on this network can reach the internet, and nothing outside can
+  # reach it. That is the §2.4 isolation requirement, enforced by the network
+  # rather than promised in a README.
+  lab_net:
+    internal: true

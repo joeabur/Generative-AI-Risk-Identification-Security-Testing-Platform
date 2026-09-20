@@ -1921,3 +1921,80 @@ produce, so the two halves cannot drift apart.
   evidence encryption at rest.** All four remain in the security review's gap
   table. Rate limiting is still the one most likely to matter first in a real
   deployment.
+
+## Post-Phase-18: authentication rate limiting
+
+The oldest open gap in `docs/security-review.md`, listed since Phase 12 and
+named there as the one most likely to matter first in a real deployment.
+Required by §18 ("login rate limiting") and §22 ("per-route rate limiting").
+`docs/rate-limiting.md` is the reference.
+
+### The decisions, and what each is defending against
+
+**Two dimensions.** Per-IP alone falls to a botnet; per-identity alone falls to
+spraying one password across many accounts. An attempt consumes from both.
+
+**Throttle, never lockout.** A lockout triggered by failed attempts is a
+denial-of-service primitive aimed at whoever the attacker names — knowing a
+colleague's email would be enough to keep them out. A 429 with `Retry-After`
+costs an attacker the same time and costs the victim a wait that ends by
+itself. Only failures accumulate; a success clears the counters, because a
+limiter that throttles legitimate users is a limiter somebody switches off.
+
+**It must not become an enumeration oracle.** Budget is consumed *before* the
+user lookup and identically for every address, so a throttled response cannot
+distinguish a real account from one that was never registered. The login
+handler was already careful about this, and a limiter bolted on afterwards is
+the usual way that care gets undone.
+
+**A client cannot choose its own bucket.** `X-Forwarded-For` is ignored unless
+an operator declares how many proxies sit in front. Reading it by default gives
+an attacker one fresh bucket per forged value — unlimited attempts, with the
+configuration still reporting the control as on. That is worse than no limiter,
+and it is the single most common way this control ships broken.
+
+**The counter store holds no email addresses.** Identity keys are an HMAC under
+a server-side pepper: an unkeyed hash of an enumerable identifier is reversible
+with a wordlist by anyone who can read the store. Normalizing first matters as
+much — without it the limit is one capitalization away from being doubled.
+
+### The one boundary here that fails open
+
+Everything else on this platform fails closed. This does not, and the asymmetry
+is reasoned rather than convenient: a rate limiter sits *on top of*
+authentication rather than being it, Argon2id still stands behind it, and
+failing closed would turn a Redis blip into a total lockout of the product —
+trading a bounded, already-mitigated risk for a total outage.
+
+What it must never do is fail open *silently*. An unavailable store logs
+`rate_limit_store_unavailable` at error level, and `docs/security-review.md`
+says plainly that the control is only as reliable as the alert on that event.
+
+### A pre-existing bug found on the way
+
+The application's `HTTPException` handler rebuilt every error response and
+**silently dropped `exc.headers`**. The 429 therefore arrived with no
+`Retry-After` — telling a client it was throttled but not for how long. It
+would have applied equally to `WWW-Authenticate` or `Allow`; nothing had
+needed a header on an error until now. Fixed, and the rate-limit test is what
+caught it.
+
+Nine controls verified by breaking them: trusting `X-Forwarded-For` by default,
+hashing the identity without a pepper, skipping normalization, dropping the
+identity dimension, never clearing on success, failing open silently, shipping
+the limiter off, enforcing after the user lookup, and dropping the exception
+headers again.
+
+### Deferrals
+
+- **Only `login` and `register` are limited.** §22 asks for per-route limiting
+  across the API; authenticated routes already require a credential and are
+  bounded by RBAC. Extending is a table entry — the machinery is general.
+- **Fixed window, not sliding.** An attacker can land up to `2 × limit`
+  attempts across a window boundary. A sliding log closes that at the cost of a
+  sorted set per key and a read of every entry, which under exactly the
+  spraying attack this defends against is the memory profile that takes the
+  store down. Bounded slack beats an unbounded blow-up.
+- **No CAPTCHA, progressive delay, or device fingerprinting.**
+- **`MemoryStore` is single-process only** and is not the default; two API
+  workers would each enforce the full limit.

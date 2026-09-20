@@ -59,6 +59,10 @@ agent ships — this platform does not run inside anybody's process. See
 keylessly with Sigstore and carry build provenance; verify one before running it
 with the commands in [`docs/releasing.md`](docs/releasing.md).
 
+Authentication endpoints are rate limited — two dimensions, throttled never
+locked out, and unable to tell a caller whether an account exists. See
+[`docs/rate-limiting.md`](docs/rate-limiting.md).
+
 All eighteen phases are built. [`docs/roadmap.md`](docs/roadmap.md) records
 exactly what's built versus deferred, and why, phase by phase;
 [`docs/limitations.md`](docs/limitations.md) says what the tool cannot detect

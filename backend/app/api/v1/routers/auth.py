@@ -5,6 +5,7 @@ from app.audit.service import record_event
 from app.auth.dependencies import CurrentUser, DbSession
 from app.auth.security import create_access_token, hash_password, verify_password
 from app.core.config import get_settings
+from app.core.ratelimit import dependency as ratelimit
 from app.models.user import User
 from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, UserRead
 
@@ -28,6 +29,11 @@ def _set_session_cookie(response: Response, token: str) -> None:
 async def register(
     payload: RegisterRequest, request: Request, response: Response, db: DbSession
 ) -> TokenResponse:
+    # Registration is unauthenticated and creates rows, so it is bounded per
+    # IP before anything is written. Doing this first also means a throttled
+    # caller cannot use the endpoint to probe which addresses are taken.
+    await ratelimit.enforce(request, "register")
+
     existing = await db.execute(select(User).where(User.email == payload.email))
     if existing.scalar_one_or_none() is not None:
         await record_event(
@@ -69,6 +75,12 @@ async def register(
 async def login(
     payload: LoginRequest, request: Request, response: Response, db: DbSession
 ) -> TokenResponse:
+    # Budget is consumed *before* the lookup and identically for every
+    # address, so a throttled response cannot tell a caller whether the
+    # account exists — the limiter must not become the enumeration oracle the
+    # handler below is careful not to be.
+    await ratelimit.enforce(request, "login", identity=payload.email)
+
     result = await db.execute(select(User).where(User.email == payload.email))
     user = result.scalar_one_or_none()
 
@@ -98,6 +110,10 @@ async def login(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Account is inactive")
 
     token = create_access_token(subject=user.id)
+    # A correct password clears the counters. Only failures should accumulate:
+    # counting successes would let a busy legitimate user throttle themselves,
+    # which is how a rate limit gets switched off in production.
+    await ratelimit.clear(request, "login", identity=payload.email)
     await record_event(
         db,
         action="auth.login",

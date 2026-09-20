@@ -82,6 +82,25 @@ class Settings(BaseSettings):
     session_cookie_name: str = "aegis_session"
     session_cookie_secure: bool = Field(default=False, alias="SESSION_COOKIE_SECURE")
 
+    # --- authentication rate limiting (§18, §22) ------------------------
+    rate_limit_enabled: bool = Field(default=True, alias="AEGIS_RATE_LIMIT_ENABLED")
+    #: How many reverse proxies sit in front of this application. Zero — the
+    #: default — means `X-Forwarded-For` is ignored entirely and the socket
+    #: address is used. That default is load-bearing: trusting the header
+    #: without a proxy in front lets any client mint a fresh rate-limit bucket
+    #: per forged value, which is worse than no limiter because the control
+    #: still looks enabled. See `app/core/ratelimit/keys.py`.
+    trusted_proxy_count: int = Field(default=0, ge=0, le=8, alias="AEGIS_TRUSTED_PROXY_COUNT")
+    #: Pepper for identity bucket keys, so the counter store holds an HMAC
+    #: rather than an email address. Defaults to the JWT secret because both
+    #: are server-side secrets of the same lifetime and requiring a second one
+    #: to be configured is how a deployment ends up with neither.
+    rate_limit_pepper: str | None = Field(default=None, alias="AEGIS_RATE_LIMIT_PEPPER")
+
+    @property
+    def effective_rate_limit_pepper(self) -> str:
+        return self.rate_limit_pepper or self.jwt_secret
+
     def model_post_init(self, __context: object) -> None:
         if (
             self.environment == "production"

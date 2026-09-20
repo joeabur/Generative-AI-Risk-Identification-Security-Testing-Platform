@@ -155,7 +155,7 @@ Stated plainly, because a review that lists only strengths is marketing.
 
 | Gap | Consequence |
 |---|---|
-| No rate limiting on authentication endpoints | Online password guessing is bounded only by Argon2's cost |
+| Rate limiting fails open when Redis is unavailable | Guessing is then bounded only by Argon2's cost; logged at error level, alert on it |
 | No server-side JWT revocation | A stolen session token is valid until it expires |
 | No encryption at rest for evidence | A host compromise yields redacted evidence bundles |
 | No CSRF token on cookie-authenticated routes | `SameSite=Lax` is the only protection; the dashboard is read-only because of it |
@@ -185,8 +185,11 @@ from pinned framework editions as of Phase 13.
    my own database".
 2. **A plugin.** No sandbox, by design and by admission. The allowlist is only
    as good as the review of what goes on it.
-3. **Authentication endpoints without rate limiting.** The oldest open item
-   here, and the one most likely to matter first in a real deployment.
+3. **Rate limiting that fails open.** Authentication endpoints are now limited
+   (`docs/rate-limiting.md`), but an unreachable Redis means they stop counting
+   and the requests are allowed. That is the deliberate choice — failing closed
+   would turn a Redis blip into a total lockout — and it means the control is
+   only as reliable as the alert on `rate_limit_store_unavailable`.
 
 ## How to re-run this review
 
@@ -354,3 +357,48 @@ checkpoints, no training data, no fine-tune. The demo lab's "assistant" is a
 string function and the AI layer calls an operator-supplied endpoint named by
 environment variable — both recorded as what they are rather than padded into a
 model inventory.
+
+## Rate limiting (§18, §22)
+
+The oldest open gap in this document is closed. `docs/rate-limiting.md` has the
+detail; the parts that bear on a deployment decision:
+
+**Two dimensions, because either alone is bypassable.** Per-IP falls to a
+botnet, per-identity falls to spraying. An attempt consumes from both.
+
+**Throttle, never lockout.** A lockout triggered by failed attempts is a
+denial-of-service primitive aimed at any user whose address an attacker knows.
+A 429 with `Retry-After` costs an attacker the same time and costs the victim a
+wait that ends by itself. Only failures accumulate; a success clears the
+counters, because a limiter that throttles legitimate users is a limiter that
+gets switched off.
+
+**It does not become an enumeration oracle.** Budget is consumed before the
+user lookup and identically for every address, so a throttled response cannot
+distinguish a real account from one that was never registered. The login
+handler was already careful about this; a limiter bolted on afterwards is the
+usual way that care is undone. Asserted, and checked by moving the enforcement
+after the lookup.
+
+**A client cannot choose its own bucket.** `X-Forwarded-For` is ignored unless
+an operator declares how many proxies sit in front. Reading it by default would
+give an attacker one fresh bucket per forged value — unlimited attempts, with
+the configuration still reporting the control as on. That is worse than no
+limiter, and it is the single most common way this control is shipped broken.
+
+**The counter store holds no email addresses.** Identity keys are an HMAC under
+a server-side pepper, because an unkeyed hash of an enumerable identifier is
+reversible with a wordlist by anyone who can read the store.
+
+**It fails open, loudly, and that is the one asymmetry here.** Everything else
+on this platform fails closed. A rate limiter sits on top of authentication
+rather than being it, Argon2id still stands behind it, and failing closed would
+trade a bounded risk for a total outage. The degradation is logged at error
+level; an operator who does not alert on it has a control that exists only on
+paper.
+
+**One real bug found on the way.** The application's `HTTPException` handler
+rebuilt every error response and silently dropped `exc.headers`, so the 429
+arrived with no `Retry-After` — telling a client it was throttled but not for
+how long. Pre-existing, and it would have applied equally to
+`WWW-Authenticate` or `Allow`.

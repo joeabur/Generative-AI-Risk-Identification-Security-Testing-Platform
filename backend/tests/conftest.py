@@ -1,7 +1,7 @@
 import os
 import pathlib
 import tempfile
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Generator
 
 import pytest
 import pytest_asyncio
@@ -29,6 +29,8 @@ os.environ.setdefault("AEGIS_LAB_GLOBEX_TOKEN", "lab-token-globex-user")
 
 from app.api.v1.routers.targets import get_dns_resolver  # noqa: E402
 from app.core.config import get_settings  # noqa: E402
+from app.core.ratelimit.dependency import reset_store_for_tests  # noqa: E402
+from app.core.ratelimit.stores import MemoryStore  # noqa: E402
 from app.db.session import get_db  # noqa: E402
 from app.main import create_app  # noqa: E402
 from tests.security.conftest import FakeDnsResolver  # noqa: E402
@@ -90,6 +92,26 @@ async def _clean_database() -> AsyncGenerator[None, None]:
     async with test_engine.begin() as conn:
         await conn.execute(text(f"TRUNCATE TABLE {', '.join(_TABLES)} RESTART IDENTITY CASCADE"))
     yield
+
+
+@pytest.fixture(autouse=True)
+def _fresh_rate_limit_store() -> Generator[MemoryStore, None, None]:
+    """A private, empty rate-limit store per test.
+
+    Two reasons this is autouse rather than opt-in. The suite would otherwise
+    talk to a real Redis from hundreds of tests, and — more importantly — the
+    counters would carry across tests: `POST /auth/register` is bounded at ten
+    per hour per IP, every test client shares one address, and the eleventh
+    registering test in a run would start failing for a reason having nothing
+    to do with what it asserts.
+
+    Tests that exercise the limiter itself ask for this fixture by name and
+    drive it directly.
+    """
+    store = MemoryStore()
+    reset_store_for_tests(store)
+    yield store
+    reset_store_for_tests(None)
 
 
 @pytest_asyncio.fixture

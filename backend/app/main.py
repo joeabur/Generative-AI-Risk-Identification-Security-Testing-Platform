@@ -63,7 +63,16 @@ def create_app() -> FastAPI:
                 request_id=request_id,
             )
         )
-        return JSONResponse(status_code=exc.status_code, content=body.model_dump())
+        # `exc.headers` must survive. Rebuilding the response without them
+        # silently dropped every header a raiser had attached — which meant a
+        # 429 arrived with no `Retry-After`, telling a client it was throttled
+        # but not for how long. Found by the rate-limit tests; it would have
+        # applied equally to `WWW-Authenticate` or `Allow`.
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=body.model_dump(),
+            headers=exc.headers or None,
+        )
 
     @app.exception_handler(Exception)
     async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:

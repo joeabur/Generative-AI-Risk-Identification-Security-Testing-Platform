@@ -33,6 +33,12 @@ under an allowlist derived from the channel's resolved destination, and webhook
 credentials are held by environment-variable reference rather than stored — see
 [`docs/integrations.md`](docs/integrations.md).
 
+Findings can also be posted back to a GitHub pull request as a check run with
+inline annotations, sharing the CI gate's verdict so a pull request and a
+pipeline cannot disagree. That integration reads the diff and writes a check
+run — it cannot push, merge or edit, and the scope engine refuses the HTTP verbs
+those would need. See [`docs/pull-requests.md`](docs/pull-requests.md).
+
 There is an isolated, intentionally vulnerable demo lab in
 [`demo-target/`](demo-target/), and a self-review of the platform's own
 controls in [`docs/security-review.md`](docs/security-review.md).
@@ -176,6 +182,8 @@ JWT revocation. See `docs/roadmap.md` for the complete list.
   (there is no sandbox, and the allowlist is the control).
 - [`docs/security-review.md`](docs/security-review.md) — a self-review of the
   platform's own controls: how each was verified, and what is not covered.
+- [`docs/pull-requests.md`](docs/pull-requests.md) — posting findings to a
+  pull request: what that layer cannot do and how each boundary is enforced.
 - [`docs/supply-chain.md`](docs/supply-chain.md) — end-of-life runtimes,
   licence obligations, name confusion and container scanning: why each exists
   where no CVE does, and what each deliberately does not claim.

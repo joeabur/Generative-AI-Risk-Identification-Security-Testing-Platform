@@ -57,22 +57,26 @@ def valid_env_var_name(name: str) -> bool:
     )
 
 
-def resolve_secret(env_var: str, environ: Mapping[str, str] | None = None) -> str:
+def resolve_secret(
+    env_var: str, environ: Mapping[str, str] | None = None, *, subject: str = "channel"
+) -> str:
     """Read a referenced secret, or refuse.
 
     The error names the variable, never a value — an error string is the most
-    common way a credential ends up in a log.
+    common way a credential ends up in a log. `subject` only shapes the
+    wording, so a code-host connection is not told it is a notification
+    channel.
     """
     if not valid_env_var_name(env_var):
         raise IntegrationError(
             f"{env_var!r} is not a valid environment variable name; "
-            "a channel references its secret by variable name"
+            f"a {subject} references its secret by variable name"
         )
     value = (environ if environ is not None else os.environ).get(env_var, "")
     if not value.strip():
         raise IntegrationError(
             f"environment variable {env_var} is not set in this process; "
-            "the channel cannot be used until the operator provides it"
+            f"the {subject} cannot be used until the operator provides it"
         )
     return value.strip()
 

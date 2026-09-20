@@ -386,6 +386,39 @@ def cmd_channels_deliveries(args: argparse.Namespace, profile: Profile) -> ExitC
     return ExitCode.PASS
 
 
+def cmd_pr_publish(args: argparse.Namespace, profile: Profile) -> ExitCode:
+    """Post a run's findings to a pull request as a check run.
+
+    Exits non-zero when the check run concluded `failure`, so a CI job can use
+    this in place of a separate gate step and get one verdict rather than two
+    that could disagree.
+    """
+    org = _org(args, profile)
+    result = _client(profile).request(
+        "POST",
+        f"/organizations/{org}/vcs-connections/{args.connection}/publish",
+        json_body={
+            "repo_owner": args.owner,
+            "repo_name": args.repo,
+            "pull_number": args.pr,
+            "head_sha": args.sha,
+            "run_id": args.run,
+        },
+    )
+    _emit(result)
+    return ExitCode.GATE_FAILED if result.get("conclusion") == "failure" else ExitCode.PASS
+
+
+def cmd_pr_posts(args: argparse.Namespace, profile: Profile) -> ExitCode:
+    org = _org(args, profile)
+    _emit(
+        _client(profile).request(
+            "GET", f"/organizations/{org}/vcs-connections/{args.connection}/posts"
+        )
+    )
+    return ExitCode.PASS
+
+
 def cmd_gate(args: argparse.Namespace, profile: Profile) -> ExitCode:
     org = _org(args, profile)
     client = _client(profile)
@@ -629,6 +662,19 @@ def _parser() -> argparse.ArgumentParser:
     ch_deliveries = channels.add_parser("deliveries")
     ch_deliveries.add_argument("--channel", required=True)
     ch_deliveries.set_defaults(handler=cmd_channels_deliveries)
+
+    pr = subparsers.add_parser("pr", help="pull requests").add_subparsers(dest="action")
+    pr_publish = pr.add_parser("publish")
+    pr_publish.add_argument("--connection", required=True, help="code host connection id")
+    pr_publish.add_argument("--owner", required=True)
+    pr_publish.add_argument("--repo", required=True)
+    pr_publish.add_argument("--pr", required=True, type=int)
+    pr_publish.add_argument("--sha", required=True, help="the pull request's head commit")
+    pr_publish.add_argument("--run", required=True, help="the run whose findings to publish")
+    pr_publish.set_defaults(handler=cmd_pr_publish)
+    pr_posts = pr.add_parser("posts")
+    pr_posts.add_argument("--connection", required=True)
+    pr_posts.set_defaults(handler=cmd_pr_posts)
 
     gate = subparsers.add_parser("gate", help="apply a security gate to a finished run")
     gate.add_argument("--run", required=True)

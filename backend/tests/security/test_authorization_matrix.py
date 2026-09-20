@@ -36,6 +36,7 @@ from app.api.v1.routers import (
     runs,
     surface,
     targets,
+    vcs,
 )
 from app.models.organization import Role
 
@@ -55,6 +56,7 @@ ROUTERS = (
     runs,
     surface,
     targets,
+    vcs,
 )
 
 # Routes excluded from the live request matrix, with the reason each one
@@ -202,6 +204,18 @@ EXPECTED_ROLES: dict[tuple[str, str], Role] = {
         "POST",
         "/organizations/{organization_id}/notification-channels/{channel_id}/test",
     ): Role.ADMIN,
+    ("DELETE", "/organizations/{organization_id}/vcs-connections/{connection_id}"): Role.ADMIN,
+    ("GET", "/organizations/{organization_id}/vcs-connections"): Role.ANALYST,
+    (
+        "GET",
+        "/organizations/{organization_id}/vcs-connections/{connection_id}/posts",
+    ): Role.ANALYST,
+    ("PATCH", "/organizations/{organization_id}/vcs-connections/{connection_id}"): Role.ADMIN,
+    ("POST", "/organizations/{organization_id}/vcs-connections"): Role.ADMIN,
+    (
+        "POST",
+        "/organizations/{organization_id}/vcs-connections/{connection_id}/publish",
+    ): Role.SECURITY_ENGINEER,
     ("PUT", "/organizations/{organization_id}/findings/{finding_id}/remediation"): Role.ANALYST,
     ("PUT", "/organizations/{organization_id}/targets/{target_id}/accounts/{label}"): Role.ADMIN,
     ("PUT", "/organizations/{organization_id}/targets/{target_id}/adapter"): Role.SECURITY_ENGINEER,

@@ -583,6 +583,47 @@ def test_smtplib_is_used_in_exactly_one_sanctioned_module() -> None:
     assert offenders == [], f"Found socket-level egress outside send.py: {offenders}"
 
 
+def test_the_code_host_client_cannot_write_to_a_repository() -> None:
+    """`app/core/vcs` reads a pull request and posts a check run. It must never
+    merge, push, update a ref or write a file — and the point of pinning it
+    statically is that a future contributor adding such a call has to delete
+    this test to do it, rather than slipping past review."""
+    import pathlib
+    import re
+
+    vcs_root = pathlib.Path(__file__).resolve().parents[2] / "app" / "core" / "vcs"
+    # The HTTP verbs GitHub uses for those operations, as this codebase spells
+    # them when calling the transport.
+    forbidden = re.compile(r'method\s*=\s*"(PUT|PATCH|DELETE)"')
+    paths = re.compile(r'"/repos/[^"]*/(merges|git/refs|git/commits|contents)')
+
+    offenders = []
+    for path in vcs_root.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        if forbidden.search(text) or paths.search(text):
+            offenders.append(str(path))
+
+    assert offenders == [], f"Found repository-write calls in app/core/vcs: {offenders}"
+
+
+def test_the_code_host_egress_context_permits_only_read_and_create() -> None:
+    """The static check above is belt; this is braces. Even if such a call were
+    added, the scope engine would refuse its verb."""
+    from app.core.vcs.contract import Destination, VcsProvider
+    from app.core.vcs.egress import vcs_egress_context
+
+    ctx = vcs_egress_context(
+        Destination(
+            provider=VcsProvider.GITHUB,
+            host="api.github.com",
+            api_base="https://api.github.com",
+        )
+    )
+    assert set(ctx.roe.allowed_methods) == {"GET", "POST"}
+    assert ctx.roe.allowed_domains == ("api.github.com",)
+    assert ctx.roe.allowed_ip_ranges == ()
+
+
 # --- scope explain / dry-run (docs/BUILD_SPEC.md §6.2, §18) -----------------
 
 

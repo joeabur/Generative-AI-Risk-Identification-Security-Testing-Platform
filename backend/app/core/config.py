@@ -69,6 +69,12 @@ class Settings(BaseSettings):
     notify_allowed_smtp_hosts: list[str] = Field(
         default_factory=list, alias="AEGIS_NOTIFY_ALLOWED_SMTP_HOSTS"
     )
+    # Which code hosts a connection may reach beyond github.com, whose API host
+    # is pinned in code. A GitHub Enterprise install's host is site-specific, so
+    # it takes an operator decision — held here, not in the database, for the
+    # same reason as the webhook list above.
+    vcs_allowed_hosts: list[str] = Field(default_factory=list, alias="AEGIS_VCS_ALLOWED_HOSTS")
+
     # Base URL used to build links back into the platform in a notification.
     # Absent means notifications carry no link rather than a guessed one.
     public_base_url: str | None = Field(default=None, alias="AEGIS_PUBLIC_BASE_URL")

@@ -1184,8 +1184,7 @@ scanning comparable to Aikido Security. Planned as vertical slices:
 3. **Container image scanning**, **license risk** and **EOL runtime** detection
    — *done, see below.*
 4. **Malware and typosquat signals** on dependencies — *done, see below.*
-5. **Repository and pull-request integration** — findings as review comments
-   and a check run.
+5. **Repository and pull-request integration** — *done, see below.*
 
 ### Slices 1 and 2: outbound integrations (done)
 
@@ -1355,6 +1354,69 @@ vulnerability. "Is this the package you meant" has no identifier at all.
   exercised only against the "tool absent" path there. The test asserts the
   honest-gap behaviour when Trivy is missing and the real parse when it is
   present, so the coverage is visible either way.
+
+### Slice 5: pull-request integration (done)
+
+`docs/pull-requests.md` is the reference. A run's findings are posted to a
+GitHub pull request as a check run with inline annotations, and the conclusion
+comes from the **same `evaluate()` the CI gate uses**, so a pull request and a
+pipeline cannot disagree about whether the same findings are a blocker.
+
+**The boundary is the design.** This layer reads a pull request and posts a
+check run. It cannot push a commit, merge, update a ref, write a file, approve
+or request changes — enforced three independent ways rather than asserted:
+`GitHubClient` has no such method; a static test greps `app/core/vcs` for the
+write verbs and the `/merges`, `/git/refs`, `/git/commits` and `/contents`
+endpoints (verified against a planted violation); and the egress context allows
+`GET` and `POST` only, so a call added later is refused by the scope engine
+before it leaves the process. That is how "no autofix that pushes to a
+customer's repository" stays true under future edits.
+
+**Egress and credentials** follow the same pattern as notifications: a `github`
+connection reaches `api.github.com` and nothing else, pinned in code so a
+database row cannot redirect it; an Enterprise host needs
+`AEGIS_VCS_ALLOWED_HOSTS` in the environment; `allowed_ip_ranges` stays empty,
+so sanctioning a host does not sanction an internal address behind it. The token
+is held by env-var reference and appears in no URL, log, audit record, response
+or error string.
+
+**Annotations only where GitHub will render them.** GitHub accepts an
+annotation only on a line the diff touches and silently discards the rest, so
+each file's patch hunks are parsed for added lines and findings are filtered
+against them. Anything unanchorable — untouched code, no line number, an HTTP
+surface that is not a file, or overflow past the 50-annotation cap — moves into
+the check run body rather than vanishing, and both counts are recorded.
+
+**Two bugs found and fixed:**
+
+- *A misconfigured connection returned a 500.* `resolve_destination` documented
+  its refusals as `VcsError` but let `IntegrationError` escape from the shared
+  secret resolver, so an unset token variable bypassed every caller's handler
+  and surfaced as an unhandled exception instead of a message naming the
+  variable. Caught by the test asserting the error names the variable.
+- *An unknown `run_id` reached the foreign key as a 500 — and was a tenancy
+  hole.* The publish endpoint did not check that the run existed and belonged to
+  the caller's organization, so another organization's run id was
+  distinguishable from a nonexistent one by the error it produced. Now both are
+  404.
+
+**Deferrals, stated rather than hidden:**
+
+- **No webhook receiver.** Aegis does not listen for `pull_request` events and
+  scan automatically; publishing is invoked by CI or by hand. Ingesting webhooks
+  needs an inbound authenticated endpoint, replay protection, and a decision
+  about what a push from a fork may trigger — worth doing deliberately.
+- **GitHub only.** The contract is provider-shaped so another host is an
+  adapter, but GitLab, Bitbucket and Azure DevOps do not exist today.
+- **No re-posting or de-duplication.** Publishing twice for the same head SHA
+  creates two check runs; the history records both and nothing updates the first.
+- **`post_review` is implemented and tested but unused by `publish`**, which
+  posts the check run alone: two writes mean two chances to half-succeed, and a
+  review comment on a line the check run already annotated is the same message
+  twice.
+- **No test against a real GitHub API.** The client is covered against a fake
+  transport that replays canned responses, and the diff parser against real
+  patch text; nothing in CI speaks to github.com.
 
 Deliberately out of scope, and recorded rather than half-built: cloud posture
 management, runtime protection, and any "autofix" that pushes a commit to a

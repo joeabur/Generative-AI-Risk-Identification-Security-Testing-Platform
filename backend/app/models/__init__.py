@@ -25,8 +25,11 @@ from app.models.surface_endpoint import SurfaceEndpoint, SurfaceSource
 from app.models.synthetic_account import SyntheticAccount
 from app.models.target import Target, TargetEnvironment, TargetKind
 from app.models.user import User
+from app.models.vcs import PullRequestPost, VcsConnection
 
 __all__ = [
+    "PullRequestPost",
+    "VcsConnection",
     "DeliveryStatus",
     "NotificationChannel",
     "NotificationDelivery",

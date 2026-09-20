@@ -1,0 +1,120 @@
+# Weekly framework version drift (docs/BUILD_SPEC.md §23, §27).
+#
+# §27 requires every framework mapping to be traceable to a pinned upstream
+# version with a retrieval date. A pin upstream has moved past is a quiet
+# correctness problem: "OWASP LLM01" names different things in different
+# editions, so a report mapped against a stale edition is confidently wrong.
+#
+# **The fetching happens here, not in the checker.** Every outbound request in
+# the application goes through the scope engine's transport, and a maintenance
+# script that opened its own connection would be a second HTTP path just
+# outside the directory the static check scans. So this job reads upstream with
+# `gh` — visible in the job log — and `scripts/framework_drift.py` does the
+# comparison, which is the part worth unit-testing.
+name: framework-drift
+
+on:
+  schedule:
+    # Monday morning. Early enough that a maintainer sees the issue with the
+    # week's other triage rather than after it.
+    - cron: "17 7 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Only to file the drift issue. Nothing here writes to the repository.
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install the backend
+        working-directory: backend
+        run: pip install -e .
+
+      - name: Read the upstream version of each repository-backed framework
+        id: upstream
+        working-directory: backend
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          python -m scripts.framework_drift --list-sources > sources.json
+          echo "{}" > observed.json
+
+          # One repository at a time, and a failure for one must not silence
+          # the others: a missing version is reported as "could not be read",
+          # which the checker keeps separate from "current" on purpose.
+          python - <<'PY' > repos.txt
+          import json
+          for item in json.load(open("sources.json")):
+              print(f"{item['key']}\t{item['repo']}")
+          PY
+
+          while IFS=$'\t' read -r key repo; do
+            [ -z "$key" ] && continue
+            version="$(gh api "repos/$repo/releases/latest" --jq .tag_name 2>/dev/null || true)"
+            if [ -z "$version" ]; then
+              version="$(gh api "repos/$repo/tags?per_page=1" --jq '.[0].name' 2>/dev/null || true)"
+            fi
+            if [ -n "$version" ] && [ "$version" != "null" ]; then
+              echo "  $key -> $version"
+              python - "$key" "$version" <<'PY'
+          import json, sys
+          key, version = sys.argv[1], sys.argv[2]
+          observed = json.load(open("observed.json"))
+          observed[key] = version
+          json.dump(observed, open("observed.json", "w"))
+          PY
+            else
+              echo "  $key -> (no version read from $repo)"
+            fi
+          done < repos.txt
+
+          cat observed.json
+
+      - name: Compare against the pinned editions
+        id: compare
+        working-directory: backend
+        run: |
+          set +e
+          python -m scripts.framework_drift --observed observed.json --out drift.md
+          echo "needs_attention=$?" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: framework-drift
+          path: backend/drift.md
+          if-no-files-found: error
+
+      - name: Open an issue when something needs a look
+        if: steps.compare.outputs.needs_attention == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        working-directory: backend
+        run: |
+          set -euo pipefail
+          title="Framework version drift ($(date -u +%Y-%m-%d))"
+
+          # One open issue at a time. A weekly job that filed a new issue every
+          # Monday would be a weekly job somebody muted.
+          existing="$(gh issue list --state open --label framework-drift \
+            --json number --jq '.[0].number' || true)"
+
+          if [ -n "$existing" ] && [ "$existing" != "null" ]; then
+            gh issue comment "$existing" --body-file drift.md
+          else
+            gh issue create --title "$title" --body-file drift.md \
+              --label framework-drift || \
+            gh issue create --title "$title" --body-file drift.md
+          fi

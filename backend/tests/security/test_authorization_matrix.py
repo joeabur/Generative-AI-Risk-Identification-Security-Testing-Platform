@@ -194,6 +194,13 @@ EXPECTED_ROLES: dict[tuple[str, str], Role] = {
     ("POST", "/organizations/{organization_id}/targets"): Role.ADMIN,
     ("POST", "/organizations/{organization_id}/targets/{target_id}/authorization"): Role.ADMIN,
     ("POST", "/organizations/{organization_id}/targets/{target_id}/scope/explain"): Role.VIEWER,
+    # Declaring runtime protection changes how this target's findings read: an
+    # injection that succeeds against a target claiming a prompt firewall is a
+    # statement about that firewall. Admin, like the other target declarations.
+    (
+        "PUT",
+        "/organizations/{organization_id}/targets/{target_id}/runtime-protection",
+    ): Role.ADMIN,
     # Phase 17 workflows. Defining one changes what gates a release, so that is
     # admin; triggering one runs an assessment, so it is the same security
     # engineer that POST /runs requires — a workflow must not be a cheaper way

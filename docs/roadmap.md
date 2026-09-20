@@ -1696,3 +1696,116 @@ document reachable by an ordinary link.
   answer.
 - **No CSRF token, so no actions.** If one is added, these routes are where the
   actions go back, and the read-only test is what makes that deliberate.
+
+## Phase 18 — RASP extension points & hardening (done)
+
+The last phase, and the smallest deliberately. §26 asks for the
+`runtime_protection` interface **only, no engine**, plus the §12 hardening pass.
+Acceptance: *a RASP-effectiveness engine can be added without touching the
+orchestrator or the scope engine; no RASP agent ships, and a static check proves
+no unsafe-mode path exists for that interface.*
+
+`docs/runtime-protection.md` and `docs/releasing.md` are the reference; this
+records what was decided.
+
+### The hard line, and how it is held
+
+A RASP agent is code that loads into a running application and instruments it.
+Shipping one means asking an operator to run this project's code inside their
+production process, which §2 forbids outright. So there is no agent, no
+bootstrap, no `sitecustomize`, no import hook, no monkey-patch.
+
+The check scans **every** Python file under `app/`, not just `app/core/rasp/`:
+an agent would not announce itself by living in the directory named after the
+thing it must not be. It also fails on a file *named* `sitecustomize.py`, which
+is how one loads without any code referencing it.
+
+**It reads parsed source with docstrings removed**, and that detail is the
+phase's main lesson repeating itself. The first version was a substring scan,
+and it fired on the contract's own docstring explaining the rule — the same
+grep-versus-prose mistake that made an earlier boundary test in this project
+pass for the wrong reason, this time in the other direction. A control that
+fails on its own documentation is a control somebody deletes. There is now a
+test *of the scanner*: it must not fire on prose describing instrumentation, and
+must fire on code performing it.
+
+### A claim is never storable as a measurement
+
+The interesting design decision. `ClaimedControl` carries a required
+`evidenced` field with three values, and `__post_init__` **raises** on anything
+but `claimed` — because nothing on this platform measures runtime protection,
+and a record saying otherwise would carry that lie for the life of the row. The
+API has no `evidenced` input field at all.
+
+A future engine relaxes that constructor deliberately, together with the test
+asserting it. Making it fail loudly now is cheaper than discovering later that
+an unmeasured claim quietly acquired the word "observed".
+
+A target that declares controls gets an explicit **"not tested"** line in every
+run, with impact stated as *Unknown*. A test asserts the marker contains no
+claim-shaped phrase and does positively say "did not measure" — and its first
+version forbade the bare word "effective" and fired on the marker's own honest
+sentence *"did not measure whether any of it is effective"*. A test that
+punishes precise writing gets the precise writing removed, so it now matches
+phrases, and the marker was reworded to remove even the ambiguity.
+
+### No unsafe-mode path
+
+`RuntimeProtectionContext` has no field that could relax a control, and the
+protocol's methods take the context and nothing else — so an engine cannot be
+handed its own transport. Measuring whether a WAF blocks something sounds like
+it needs an escape hatch; it needs the engagement to authorize the request,
+which the rules of engagement already decide.
+
+Seven controls in this phase were verified by breaking them: adding `safe_mode`
+to the context, planting a real `sys.meta_path` hook, shipping an engine class,
+deleting the `evidenced` guard, removing the env-var-name validator, making the
+marker always return `None`, and making the contract import the scope engine.
+
+### The §12 hardening pass: the last two workflows
+
+`framework-drift.yml` and `release.yml`, which had been listed as absent in
+`docs/security-review.md` since Phase 12.
+
+**The drift checker does not fetch.** Every outbound request in the application
+goes through the scope engine's transport. A maintenance script that opened its
+own connection would be a second HTTP path placed just outside the directory the
+static check scans — worse than an obvious one, because it looks compliant. So
+the workflow reads upstream with `gh api`, visible in the job log, and
+`scripts/framework_drift.py` does the comparison, which is the part worth unit
+testing. A test asserts the checker imports no HTTP library.
+
+**A failed lookup is never "current".** The checker has four buckets, and
+`unknown` exists so a GitHub outage or a renamed repository cannot make the
+weekly job report that every pin is fine. Frameworks published as a web page
+have no tag to compare, so they are reported by retrieval age instead —
+reporting them as current would be reporting that the script did not look.
+
+**Signing is keyless.** No long-lived key in a repository secret: a stolen one
+works forever and rotating it means every consumer relearns it. Sigstore binds
+the certificate to this repository, this workflow and this run.
+`docs/releasing.md` shows the verification command **with `--cert-identity`**,
+because verifying that *a* valid signature exists proves nothing.
+
+A new `tests/test_ci_workflows.py` enumerates the nine §23 workflows rather than
+trusting a prose list somebody has to remember to update — which is exactly how
+those two stayed missing for five phases. It also asserts every workflow
+declares its permissions and that none uses `pull_request_target`.
+
+### Deferrals, stated rather than hidden
+
+- **No release has been cut.** `release.yml` is written and its structure is
+  asserted, but nothing has run it end to end, because that means publishing a
+  real tag. `docs/releasing.md` says so in its own "what a release does not
+  promise" section rather than leaving it to be assumed.
+- **No container image signing or publishing.** Images are scanned; none is
+  published, so there is nothing to sign.
+- **No reproducible builds.** GitHub's attestation says what built an artifact,
+  not that the build was hermetic. The docs do not claim otherwise.
+- **The drift check cannot read a web-published framework.** OWASP API
+  Security's edition pages and the NIST AI RMF have no machine-readable
+  version. Those are surfaced by retrieval age, and a maintainer reads them.
+- **No runtime-protection engine, and none planned here.** Phase 18 authorizes
+  the extension point. Adding an engine is one line in
+  `RUNTIME_PROTECTION_ENGINES` and a deliberate change to three tests, which is
+  the whole point of the shape.

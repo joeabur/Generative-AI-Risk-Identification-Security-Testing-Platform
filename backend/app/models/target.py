@@ -71,6 +71,12 @@ class Target(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # Source-code surface (Addendum v2.1 §3). Absent means the SAST, SCA,
     # secrets-in-source and IaC engines refuse to run — the same fail-closed
     # rule the scope engine applies to a URL, applied to a checkout.
+    #: What the operator CLAIMS is deployed in front of this target, in the
+    #: shape `app/core/rasp/contract.py` defines. A claim, never a measurement:
+    #: nothing on this platform tests runtime protection, and the `evidenced`
+    #: field on each entry keeps that visible in the data rather than in a
+    #: comment (docs/BUILD_SPEC.md §5.1, §26 Phase 18).
+    runtime_protection: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
     code_repo_ref: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     code_languages: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
     code_build_manifest_paths: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)

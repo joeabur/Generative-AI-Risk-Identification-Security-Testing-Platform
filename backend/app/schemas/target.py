@@ -1,9 +1,11 @@
+import re
 import uuid
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.core.rasp.contract import ControlKind
 from app.models.target import TargetEnvironment, TargetKind
 
 
@@ -54,6 +56,48 @@ class TargetCodeUpdate(BaseModel):
     code_scope: CodeScopeIn
 
 
+class ClaimedControlIn(BaseModel):
+    """One runtime control an operator says is deployed.
+
+    `telemetry_env_var` is a variable NAME. The field is validated as one so a
+    value pasted in by mistake is rejected at the edge rather than stored: a
+    secret in a database row is a secret in every backup, log and support
+    ticket taken afterwards.
+
+    There is no `evidenced` field. It would be the only field on this object a
+    caller could use to assert a measurement nobody made, and the API is not
+    the place to let that happen — everything stored through here is
+    `claimed`, and `app/core/rasp/contract.py` refuses to construct anything
+    else while no engine exists.
+    """
+
+    kind: ControlKind
+    vendor: str | None = Field(default=None, max_length=120)
+    telemetry_env_var: str | None = Field(default=None, max_length=128)
+    notes: str = Field(default="", max_length=500)
+
+    @field_validator("telemetry_env_var")
+    @classmethod
+    def _must_be_a_variable_name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]{0,127}", value):
+            raise ValueError(
+                "telemetry_env_var must be an environment variable NAME "
+                "(A-Z, 0-9 and underscore), never its value."
+            )
+        return value
+
+
+class TargetRuntimeProtectionUpdate(BaseModel):
+    """What an operator declares is protecting this target.
+
+    An empty list is meaningful and allowed: it clears the declaration.
+    """
+
+    controls: list[ClaimedControlIn] = Field(default_factory=list, max_length=20)
+
+
 class TargetAdapterUpdate(BaseModel):
     """Which adapter speaks to this target's chat surface, and how."""
 
@@ -74,6 +118,7 @@ class TargetRead(BaseModel):
     adapter_kind: str | None
     adapter_config: dict[str, Any]
     code_repo_ref: str | None
+    runtime_protection: list[dict[str, Any]] = Field(default_factory=list)
     code_languages: list[str]
     code_build_manifest_paths: list[str]
     declared_tools: list[dict[str, Any]]

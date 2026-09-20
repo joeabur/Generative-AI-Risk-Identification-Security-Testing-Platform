@@ -53,8 +53,13 @@ number on it is a real query — see [`docs/dashboard.md`](docs/dashboard.md).
 The Next.js app in `frontend/` remains the Phase-1 auth scaffold and is not
 the dashboard.
 
-Still to come: RASP extension points (Phase 18).
-[`docs/roadmap.md`](docs/roadmap.md) records
+Runtime protection is recorded as a *claim*, never a measurement, and no RASP
+agent ships — this platform does not run inside anybody's process. See
+[`docs/runtime-protection.md`](docs/runtime-protection.md). Releases are signed
+keylessly with Sigstore and carry build provenance; verify one before running it
+with the commands in [`docs/releasing.md`](docs/releasing.md).
+
+All eighteen phases are built. [`docs/roadmap.md`](docs/roadmap.md) records
 exactly what's built versus deferred, and why, phase by phase;
 [`docs/limitations.md`](docs/limitations.md) says what the tool cannot detect
 and where its false positives cluster.

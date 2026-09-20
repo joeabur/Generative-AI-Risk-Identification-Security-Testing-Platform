@@ -5,7 +5,7 @@ run it. It states what the controls are, how each one was verified, and what is
 deliberately not covered. Where a control is weaker than it might appear, that
 is said here rather than left to be discovered.
 
-Reviewed on branch `claude/ai-risk-security-platform-vc1nch`, through Phase 17.
+Reviewed on branch `claude/ai-risk-security-platform-vc1nch`, through Phase 18.
 The test count moves with every phase; `docs/roadmap.md` records what each one
 added and what it deliberately left out.
 
@@ -165,8 +165,9 @@ Stated plainly, because a review that lists only strengths is marketing.
 | Advisory lookup off by default | SCA reports what is installed, not what is vulnerable, unless enabled |
 | No inbound webhook endpoint | Workflows and PR publishing are driven by CI, never by an event from a code host |
 | Dashboard has no pagination | Findings cap at 200, runs at 50; the API is the complete answer |
-| Four §23 workflows absent | `release.yml`, `framework-drift.yml` and two others are not written |
-| No Sigstore signing | Releases are unsigned |
+| No release has been cut | `release.yml` is written and structurally asserted, but has never run end to end |
+| No container image signing | Images are scanned; none is published, so none is signed |
+| No runtime-protection measurement | Claimed WAF/RASP controls are recorded and explicitly marked "not tested" |
 
 Three rows that stood here through Phase 15 have been removed because the gaps
 were closed, not because they got quieter: container, licence and end-of-life
@@ -278,3 +279,41 @@ object rather than the page. Replacing a dashboard card's value with a literal
 every card and severity row to the query's output. The original would have
 shipped a green suite around a guarantee that was not being checked — which is
 the failure mode this whole document exists to catch.
+
+## Phase 18 additions: runtime-protection extension points
+
+One new surface, and it is deliberately inert.
+
+**This platform does not run inside a customer's process, and that is checked.**
+A RASP agent would be code loaded into a running application — which §2 forbids
+outright, whatever the configuration. `tests/test_rasp.py` scans every Python
+file under `app/` for the ways an agent gets into a process (`sys.meta_path`,
+`sys.settrace`, `sitecustomize`, `LD_PRELOAD` and the rest) and fails on any,
+including a file merely *named* `sitecustomize.py`.
+
+The scan reads parsed source with docstrings removed. Its first version was a
+substring scan and fired on the contract's own docstring explaining the rule —
+the grep-versus-prose failure this project has now made twice, in both
+directions. There is a test *of the scanner*: prose describing instrumentation
+must not trip it, and code performing it must.
+
+**A claim cannot be stored as a measurement.** Every declared control carries a
+required `evidenced` field, and the constructor raises on anything but
+`claimed` — nothing here has measured runtime protection, and the API has no
+`evidenced` input field. A target that declares controls gets an explicit "not
+tested" line in every run, with impact stated as *Unknown*, so a clean
+assessment against a target claiming a WAF does not read as a WAF that held.
+
+**No unsafe-mode path for the interface.** `RuntimeProtectionContext` carries
+no `safe_mode`, `force`, `allow_*`, `bypass_*` or `disable_*` field, and the
+protocol's methods take the context alone, so a future engine cannot be handed
+its own transport. Verified by adding `safe_mode: bool = False` and watching
+the test fail.
+
+**The framework-drift checker makes no network requests.** The fetch lives in
+the workflow, where the job log shows it; the Python compares. A maintenance
+script with its own HTTP client would be a second outbound path placed just
+outside the directory the static check scans, which is worse than an obvious
+one because it looks compliant. A test asserts the checker imports no HTTP
+library, and that a failed upstream lookup is reported as a gap rather than as
+"current".

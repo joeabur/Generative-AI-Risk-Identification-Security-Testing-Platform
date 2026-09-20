@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 from app.audit.service import record_event
 from app.auth.dependencies import DbSession, require_membership
 from app.core.orchestrator.context_builder import build_run_context
+from app.core.rasp.contract import ClaimedControl, RuntimeProtectionProfile
 from app.core.scope.dns import DnsResolver, SystemDnsResolver
 from app.core.scope.engine import ScopeEngine
 from app.core.scope.errors import AuthorizationRequiredError, RoEValidationError
@@ -30,6 +31,7 @@ from app.schemas.target import (
     TargetCodeUpdate,
     TargetCreate,
     TargetRead,
+    TargetRuntimeProtectionUpdate,
 )
 
 router = APIRouter(prefix="/organizations/{organization_id}/targets", tags=["targets"])
@@ -59,6 +61,9 @@ def _target_read(target: Target) -> TargetRead:
         code_build_manifest_paths=[str(item) for item in (target.code_build_manifest_paths or [])],
         adapter_config=dict(target.adapter_config or {}),
         declared_tools=list(target.declared_tools or []),
+        runtime_protection=[
+            dict(item) for item in (target.runtime_protection or []) if isinstance(item, dict)
+        ],
         has_authorization=target.authorization is not None,
         has_rules_of_engagement=target.rules_of_engagement is not None,
         created_at=target.created_at,
@@ -444,4 +449,72 @@ async def configure_code_scope(
     )
     await db.commit()
 
+    return _target_read(target)
+
+
+@router.put("/{target_id}/runtime-protection", response_model=TargetRead)
+async def declare_runtime_protection(
+    organization_id: uuid.UUID,
+    target_id: uuid.UUID,
+    payload: TargetRuntimeProtectionUpdate,
+    request: Request,
+    db: DbSession,
+    membership: Membership = Depends(require_membership(Role.ADMIN)),  # noqa: B008
+) -> TargetRead:
+    """Record what the operator claims protects this target.
+
+    Admin, because a declaration here changes how this target's findings read:
+    an injection that succeeds against a target claiming a prompt firewall is a
+    statement about that firewall. Someone accountable should be the one making
+    the claim.
+
+    **This endpoint stores a claim and measures nothing.** No engine on this
+    platform tests runtime protection (docs/BUILD_SPEC.md §4.5 row 6), so every
+    entry is stored as `evidenced: claimed` and a report over this target
+    carries an explicit "not tested" line rather than letting the declaration
+    read as a control that was verified.
+    """
+    target = await load_target(organization_id, target_id, db)
+
+    # Built through the contract's own dataclass rather than assembled inline:
+    # `ClaimedControl.__post_init__` is what refuses to mint anything but a
+    # claim, and routing the write through it means the API cannot become a
+    # second place that decides what "evidenced" may say.
+    profile = RuntimeProtectionProfile(
+        controls=tuple(
+            ClaimedControl(
+                kind=control.kind,
+                vendor=control.vendor,
+                telemetry_env_var=control.telemetry_env_var,
+                notes=control.notes,
+            )
+            for control in payload.controls
+        )
+    )
+    target.runtime_protection = profile.control_records()
+    await db.flush()
+
+    await record_event(
+        db,
+        action="target.runtime_protection.declare",
+        resource_type="target",
+        resource_id=str(target.id),
+        result="allow",
+        organization_id=organization_id,
+        user_id=membership.user_id,
+        ip_address=request.client.host if request.client else None,
+        # Kinds and the variable NAME only. A vendor string is free text an
+        # operator typed, and the audit log is not the place to find out it
+        # contained something it should not have.
+        metadata={
+            "controls": [control.kind.value for control in payload.controls],
+            "telemetry_env_vars": [
+                control.telemetry_env_var
+                for control in payload.controls
+                if control.telemetry_env_var
+            ],
+        },
+    )
+    await db.commit()
+    await db.refresh(target)
     return _target_read(target)

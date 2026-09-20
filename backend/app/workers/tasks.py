@@ -47,6 +47,7 @@ from app.core.orchestrator.probe_check import ProbeCheck
 from app.core.orchestrator.runner import RunEventPayload, execute_run
 from app.core.probes.api.registry import build_api_registry
 from app.core.probes.models import ScanResult, Severity
+from app.core.rasp.contract import RuntimeProtectionProfile, untested_marker
 from app.core.retest.service import record_retest
 from app.core.scope.errors import AuthorizationRequiredError, RoEValidationError
 from app.core.scope.kill_switch import KillSwitch
@@ -347,6 +348,18 @@ async def execute_assessment_run(
             all_results.extend(dast_check.scan_results)
         if plugin_check is not None:
             all_results.extend(plugin_check.scan_results)
+
+        # A target that declares runtime protection gets an explicit "not
+        # tested" line, because no engine on this platform measures it
+        # (docs/BUILD_SPEC.md §4.5 row 6). §14 requires a report to state what
+        # it did not cover, and a claimed WAF that nothing exercised is exactly
+        # the kind of gap that otherwise reads as a control that held.
+        rasp_marker = untested_marker(
+            RuntimeProtectionProfile.from_records(target.runtime_protection or [])
+        )
+        if rasp_marker is not None:
+            all_results.append(rasp_marker)
+
         await _persist_scan_results(db, run.id, run.organization_id, all_results)
 
         # Promote this run's results into persistent findings. Done after

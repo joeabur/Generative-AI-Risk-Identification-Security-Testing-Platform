@@ -16,7 +16,8 @@ end today: the scope/authorization engine and its gated transport (the single
 outbound control point), target adapters and OpenAPI discovery, run
 orchestration with cancellation and live progress, 16 API probes, 11 AI
 probes measured with Wilson-interval attack success rates against their own
-controls, the SAST/SCA/secrets/IaC engines, the AI assistant layer (drafts
+controls, the SAST/SCA/secrets/IaC engines plus supply-chain analysis (end-of-life
+runtimes, licence obligations, dependency name confusion, container packages), the AI assistant layer (drafts
 only, never execution), risk-scored findings with stable fingerprints, and
 content-addressed evidence plus reports in Markdown, HTML, PDF, JSON, SARIF
 2.1.0 and CSV, and a remediation board with a retest workflow that reports
@@ -24,6 +25,13 @@ reproduced / not reproduced / not tested with the evidence from either side.
 
 There is also an `aegis-ai` CLI and a CI security gate with documented exit
 codes — see [`docs/cicd.md`](docs/cicd.md).
+
+Findings and finished runs can be sent out to Slack, Microsoft Teams, a
+signed generic webhook, or email. A notification channel is not an exception to
+the outbound rule: every delivery goes through the same scope-gated transport,
+under an allowlist derived from the channel's resolved destination, and webhook
+credentials are held by environment-variable reference rather than stored — see
+[`docs/integrations.md`](docs/integrations.md).
 
 There is an isolated, intentionally vulnerable demo lab in
 [`demo-target/`](demo-target/), and a self-review of the platform's own
@@ -168,6 +176,13 @@ JWT revocation. See `docs/roadmap.md` for the complete list.
   (there is no sandbox, and the allowlist is the control).
 - [`docs/security-review.md`](docs/security-review.md) — a self-review of the
   platform's own controls: how each was verified, and what is not covered.
+- [`docs/supply-chain.md`](docs/supply-chain.md) — end-of-life runtimes,
+  licence obligations, name confusion and container scanning: why each exists
+  where no CVE does, and what each deliberately does not claim.
+- [`docs/integrations.md`](docs/integrations.md) — outbound notifications:
+  why a channel cannot become an SSRF primitive, how credentials stay out of
+  the database, the retry and dead-letter rules, and the webhook signing
+  scheme.
 - [`docs/cicd.md`](docs/cicd.md) — the `aegis-ai` CLI, API keys, and the CI
   security gate: its exit codes, and why it refuses to fail a build on an
   unstable finding.

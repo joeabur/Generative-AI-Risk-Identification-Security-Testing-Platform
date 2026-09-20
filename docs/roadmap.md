@@ -1178,17 +1178,183 @@ described in the next section.
 Asked for directly: outbound integrations (mail, Slack, Teams) and repository
 scanning comparable to Aikido Security. Planned as vertical slices:
 
-1. **Integrations foundation** — channels, event types, delivery through the
-   platform-egress path the AI provider already uses (allowlist derived from
-   configuration, never from a parameter, so a notification channel cannot
-   become an SSRF primitive), HMAC signing, retry and dead-letter, redaction
-   before send, an audit event per delivery.
-2. **Slack, Teams, email and generic signed webhook** adapters, API, CLI.
-3. **Container image scanning**, **license risk** and **EOL runtime** detection.
-4. **Malware and typosquat signals** on dependencies — name similarity and
-   install-hook detection, with no invented advisory identifiers.
+1. **Integrations foundation** — *done, see below.*
+2. **Slack, Teams, email and generic signed webhook** adapters, API, CLI —
+   *done, see below.*
+3. **Container image scanning**, **license risk** and **EOL runtime** detection
+   — *done, see below.*
+4. **Malware and typosquat signals** on dependencies — *done, see below.*
 5. **Repository and pull-request integration** — findings as review comments
    and a check run.
+
+### Slices 1 and 2: outbound integrations (done)
+
+`docs/integrations.md` is the reference; this records what was decided and what
+is deliberately missing.
+
+**Four controls stand between an organization admin and an outbound request**,
+because a channel is operator-configured data that produces an HTTP request —
+the shape of an SSRF primitive:
+
+1. Delivery goes through `GatedTransport` under a context whose
+   `allowed_domains` is the one resolved destination host and whose
+   `allowed_ip_ranges` is empty, so loopback, RFC1918 and the cloud metadata
+   service stay refused — including the DNS-rebind case, since the engine
+   re-resolves at send time.
+2. The allowlist is derived from the resolved destination, never passed as a
+   parameter. Same property as `app/core/assistant/egress.py`, for the same
+   reason.
+3. Vendor kinds are pinned to vendor hosts (`hooks.slack.com`,
+   `*.webhook.office.com`, `*.logic.azure.com`).
+4. A generic webhook host or SMTP relay must appear in an operator allowlist
+   that lives in the **environment**, not the database. An admin picks among
+   destinations an operator sanctioned; the database alone can never widen
+   egress.
+
+**Credentials are held by reference, as §5 requires.** A Slack incoming webhook
+URL *is* a credential — the token is its path — so the channel row stores the
+name of an environment variable plus a redacted display form
+(`https://hooks.slack.com/…/…/…`). The migration has no column that could hold
+a URL, a token or a password. Verified by a test that reads every column of a
+stored channel row and asserts the token appears in none of them.
+
+**Two things found while building this, both fixed:**
+
+- *An error string was going to leak the webhook URL.* A transport exception
+  quotes the URL it failed on, and that URL is a credential. Relying on the
+  secret detector here would have been a mistake: a Slack webhook token is
+  opaque random text matching no issuer pattern. So `scrub` strips URL paths
+  outright before the detector runs, and every outcome passes through one
+  wrapper rather than each `return` remembering to scrub. The test establishes
+  the premise first — it asserts the plain redactor *does not* catch the token —
+  so it cannot pass for the wrong reason.
+- *A lazy relationship load in the notification worker.* `run.target.name`
+  raises `MissingGreenlet` under asyncpg rather than quietly querying. Replaced
+  with an explicit select. Caught by the fan-out test, not by review.
+
+**Deliberate choices worth stating:**
+
+- A payload that trips the secret detector is **refused**, not truncated. A
+  delivery marked `refused` with a reason beats an alert missing the one line
+  somebody needed.
+- A refusal is never retried; only a transport failure is, four attempts across
+  ~12 minutes, then `dead_letter`. A retry loop against a bad configuration is
+  how rate limits get hit.
+- A retry rebuilds the event from the delivery row's snapshot rather than
+  re-reading the finding, so a "critical finding" alert cannot arrive about
+  something a human already closed.
+- An event whose severity cannot be ranked is **not** dropped. A missed security
+  notification is the costliest failure mode here.
+- Every attempt is audited, including the ones that never reached the network.
+
+**Deferrals, stated rather than hidden:**
+
+- `retest.completed` and `gate.failed` are defined event types that **nothing
+  emits yet** — the retest worker and the CI gate are not wired to `enqueue`. A
+  channel subscribed only to those receives nothing. Said plainly in
+  `docs/integrations.md` too.
+- **SMTP is not gated by `GatedTransport`**, because SMTP is not HTTP. The same
+  `ScopeEngine` adjudicates the relay host first and STARTTLS is required, but
+  the engine does not see that socket. A smaller guarantee than the webhook
+  path has. `tests/security/test_scope_controls.py` now pins `smtplib` and
+  `socket.socket(` to that one module, and the pin was proved to have teeth by
+  planting a second import.
+- **No SMTP integration test against a real relay.** The email path is covered
+  at the unit level (policy, rendering, STARTTLS-required branch) and by the
+  scope refusal, but nothing in CI speaks SMTP to a server.
+- No per-channel rate limiting or digesting. A run that promotes fifty new
+  criticals sends fifty messages.
+- No Slack/Teams app with interactive actions — incoming webhooks only. Buttons
+  that change a finding's state would need the assistant-layer restrictions
+  thought through first, and §26 forbids an AI layer modifying a real finding.
+- No delivery replay endpoint. A dead-lettered row is visible and carries its
+  event snapshot, but re-sending it means a database change today.
+
+### Slices 3 and 4: supply-chain scanning (done)
+
+`docs/supply-chain.md` is the reference. Four engines, registered in
+`app/core/appsec/registry.py`, all reporting the same `ScanResult` shape as every
+other engine: end-of-life runtimes, dependency licence risk, name confusion, and
+a container dependency scan.
+
+**The reason all four exist is that none of them has a CVE behind it**, which is
+why an advisory-only scanner reports an affected repository as clean. An
+end-of-life Python 3.8 base image gets no advisory. A licence obligation is not a
+vulnerability. "Is this the package you meant" has no identifier at all.
+
+**Restraint is the design, and it is what the tests check:**
+
+- A runtime or series not in the vendored EOL table is reported as **not
+  assessed** (`AEGIS-SUPPLY-019`), never as supported. Every EOL finding carries
+  the table's compile date, so "supported as of six months ago" is
+  distinguishable from "supported today".
+- EOL severity is **capped below CRITICAL**. A standing exposure is not a
+  demonstrated exploit, and calling every old base image critical would devalue
+  the findings that are.
+- The licence engine reports **obligations, not violations**: whether AGPL
+  matters depends on whether the product is distributed or hosted, which the
+  scanner does not know. A missing licence classifies as unknown, never as
+  permissive. Permissive dependencies get no finding at all, because one per MIT
+  dependency buries the two that matter.
+- Name-confusion findings are **signals at LOW/INFORMATIONAL with
+  `DESIGN_REVIEW` confidence**, and a test asserts none of them contains the
+  words "malware" or "malicious package". A test also pins that `dateutil` is
+  *not* flagged against `python-dateutil` — that false positive is what would
+  make the check unusable.
+- The container engine scans the **filesystem, not a pulled image**, and emits
+  `AEGIS-CONTAINER-009` saying base layers were not examined. Pulling would mean
+  reaching an unsanctioned registry as an outbound request the transport never
+  sees, and materialising an untrusted image on the worker.
+
+**Three things found while building this, all fixed:**
+
+- *The licence engine classified almost everything as "unknown".* It read Trove
+  classifier text (`License :: OSI Approved :: Apache Software License`) and
+  trimmed the trailing word, producing `"Apache Software"` — not an SPDX
+  identifier, so every such package fell into the unknown bucket, which is a
+  useless output dressed up as a finding. Fixed with an explicit
+  `CLASSIFIER_TO_SPDX` map and a lookup order of expression → short `License`
+  field → mapped classifier. Caught by running the engine against the venv's own
+  installed packages rather than by reading the code.
+- *Transpositions were not detected.* `reqeusts` for `requests` is the commonest
+  squat shape, and Levenshtein scores an adjacent swap as two edits — so the
+  one-edit cap missed it, and raising the cap to two would have admitted
+  genuinely different names. Added as its own check. The test asserts the
+  premise (`edit_distance("reqeusts", "requests", cap=1) > 1`) so it cannot pass
+  for the wrong reason.
+
+- *An unrecognised base image was silently invisible.* `runtime_declarations`
+  only emitted a declaration for images whose name mapped to a known runtime, so
+  `FROM crystal:1.9-alpine` produced nothing at all — and nothing at all reads
+  as "supported", which is the exact failure the not-assessed marker exists to
+  prevent. Now any versioned base image yields a declaration under its own name
+  and comes through as `AEGIS-SUPPLY-019`. Caught by the test that asserts the
+  not-assessed path, which failed on the first run.
+
+**Deferrals, stated rather than hidden:**
+
+- **No registry lookup**, so no true dependency-confusion detection ("does this
+  private name also exist publicly?") and no new-maintainer or freshly-published
+  signal. Both need an authorized outbound path and an operator's disclosure
+  decision, the same shape as `pip-audit`'s opt-in.
+- **No image-layer scan.** Recorded as a gap in the findings themselves, not
+  just here.
+- **No malware analysis.** The engine reports *where* install-time code runs; it
+  does not analyse what that code does, and does not claim to.
+- **No reachability analysis** on container findings, same as the existing SCA
+  engine.
+- **No licence policy configuration.** There is no way to declare "AGPL is
+  forbidden here" and have the CI gate fail on it; findings are reported and a
+  human decides. The gate already thresholds on severity, so wiring this means
+  deciding whether a policy breach is a severity or a separate gate dimension.
+- **A floating base image tag (`FROM python:latest`) or a digest-only pin is not
+  reported**: neither declares a version, so there is nothing to compare against
+  a support schedule. An unpinned base image is a real finding, just not this
+  engine's.
+- **Trivy is not installed in CI**, so `AEGIS-CONTAINER-001` parsing is
+  exercised only against the "tool absent" path there. The test asserts the
+  honest-gap behaviour when Trivy is missing and the real parse when it is
+  present, so the coverage is visible either way.
 
 Deliberately out of scope, and recorded rather than half-built: cloud posture
 management, runtime protection, and any "autofix" that pushes a commit to a

@@ -56,6 +56,23 @@ class Settings(BaseSettings):
     plugins_config: str | None = Field(default=None, alias="PLUGINS_CONFIG")
     no_plugins: bool = Field(default=False, alias="AEGIS_NO_PLUGINS")
 
+    # --- outbound integrations (docs/BUILD_SPEC.md §27) ------------------
+    # Which hosts a notification may reach, beyond the vendor hosts pinned in
+    # `app/core/integrations/contract.py`. This lives in the environment, not
+    # in the database, on purpose: an organization admin may choose which
+    # Slack workspace to notify, but adding a brand-new outbound destination
+    # is an operator decision. A generic webhook whose host is not listed here
+    # is refused, so the database alone can never widen egress.
+    notify_allowed_webhook_hosts: list[str] = Field(
+        default_factory=list, alias="AEGIS_NOTIFY_ALLOWED_WEBHOOK_HOSTS"
+    )
+    notify_allowed_smtp_hosts: list[str] = Field(
+        default_factory=list, alias="AEGIS_NOTIFY_ALLOWED_SMTP_HOSTS"
+    )
+    # Base URL used to build links back into the platform in a notification.
+    # Absent means notifications carry no link rather than a guessed one.
+    public_base_url: str | None = Field(default=None, alias="AEGIS_PUBLIC_BASE_URL")
+
     session_cookie_name: str = "aegis_session"
     session_cookie_secure: bool = Field(default=False, alias="SESSION_COOKIE_SECURE")
 

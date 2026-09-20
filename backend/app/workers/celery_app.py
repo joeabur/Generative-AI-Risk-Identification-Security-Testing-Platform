@@ -11,7 +11,7 @@ celery_app = Celery(
     # Without this the worker starts happily but never registers
     # `aegis.run_assessment`, and every queued run is discarded as an
     # "unregistered task" while the API reports it as queued.
-    include=["app.workers.tasks"],
+    include=["app.workers.tasks", "app.workers.notifications"],
 )
 
 celery_app.conf.update(

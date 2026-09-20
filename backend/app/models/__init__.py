@@ -11,6 +11,11 @@ from app.models.assessment_run import (
 from app.models.audit import AuditEvent
 from app.models.authorization import Authorization
 from app.models.finding import Finding, FindingStatus
+from app.models.integration import (
+    DeliveryStatus,
+    NotificationChannel,
+    NotificationDelivery,
+)
 from app.models.organization import Membership, Organization, Role
 from app.models.remediation import RemediationTask
 from app.models.retest import RetestResult, RetestVerdict
@@ -22,6 +27,9 @@ from app.models.target import Target, TargetEnvironment, TargetKind
 from app.models.user import User
 
 __all__ = [
+    "DeliveryStatus",
+    "NotificationChannel",
+    "NotificationDelivery",
     "ApiKeyScope",
     "ApiKey",
     "RunKind",

@@ -562,6 +562,27 @@ def test_no_ungated_httpx_client_construction_outside_transport() -> None:
     )
 
 
+def test_smtplib_is_used_in_exactly_one_sanctioned_module() -> None:
+    """The mail relay is the one destination that cannot travel through
+    `GatedTransport`, because SMTP is not HTTP. That exception is confined to
+    `app/core/integrations/send.py`, which asks the scope engine to adjudicate
+    the relay host before opening a socket. Pinned here so a second
+    socket-opening path cannot be added quietly."""
+    import pathlib
+    import re
+
+    app_root = pathlib.Path(__file__).resolve().parents[2] / "app"
+    allowed_file = app_root / "core" / "integrations" / "send.py"
+    pattern = re.compile(r"\bimport smtplib\b|\bfrom smtplib\b|\bsocket\.socket\(")
+
+    offenders = [
+        str(path)
+        for path in app_root.rglob("*.py")
+        if path != allowed_file and pattern.search(path.read_text(encoding="utf-8"))
+    ]
+    assert offenders == [], f"Found socket-level egress outside send.py: {offenders}"
+
+
 # --- scope explain / dry-run (docs/BUILD_SPEC.md §6.2, §18) -----------------
 
 

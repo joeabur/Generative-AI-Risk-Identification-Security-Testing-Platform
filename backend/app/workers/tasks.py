@@ -390,7 +390,14 @@ def run_assessment(run_id: str) -> str:
         finally:
             await dispose_engine()
 
-    return asyncio.run(_run()).value
+    status = asyncio.run(_run())
+    # Queued after the run's own transaction has committed and its engine is
+    # disposed, so a channel that hangs cannot hold an assessment open and a
+    # notification failure is never recorded as an assessment failure.
+    from app.workers.notifications import notify_run_finished
+
+    notify_run_finished.delay(run_id)
+    return status.value
 
 
 async def _prepare_code_check(target: Target, checkout_dir: "Path") -> CodeScanCheck:

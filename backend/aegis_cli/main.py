@@ -332,6 +332,60 @@ def cmd_evidence_verify(args: argparse.Namespace, profile: Profile) -> ExitCode:
     return ExitCode.PASS if result.get("ok") else ExitCode.GATE_FAILED
 
 
+def cmd_channels_list(args: argparse.Namespace, profile: Profile) -> ExitCode:
+    org = _org(args, profile)
+    _emit(_client(profile).request("GET", f"/organizations/{org}/notification-channels"))
+    return ExitCode.PASS
+
+
+def cmd_channels_add(args: argparse.Namespace, profile: Profile) -> ExitCode:
+    """Create a channel.
+
+    Note that no secret is passed on the command line — `--endpoint-env-var`
+    names the variable that holds the webhook URL. A CLI that took the URL
+    would put it in the operator's shell history.
+    """
+    org = _org(args, profile)
+    payload: dict[str, object] = {
+        "name": args.name,
+        "kind": args.kind,
+        "events": args.event,
+    }
+    if args.endpoint_env_var:
+        payload["endpoint_env_var"] = args.endpoint_env_var
+    if args.signing_secret_env_var:
+        payload["signing_secret_env_var"] = args.signing_secret_env_var
+    if args.min_severity:
+        payload["min_severity"] = args.min_severity
+    _emit(
+        _client(profile).request(
+            "POST", f"/organizations/{org}/notification-channels", json_body=payload
+        )
+    )
+    return ExitCode.PASS
+
+
+def cmd_channels_test(args: argparse.Namespace, profile: Profile) -> ExitCode:
+    org = _org(args, profile)
+    result = _client(profile).request(
+        "POST", f"/organizations/{org}/notification-channels/{args.channel}/test"
+    )
+    _emit(result)
+    # A channel that cannot deliver is a failure: silence during an incident is
+    # the outcome this command exists to rule out.
+    return ExitCode.PASS if result.get("delivered") else ExitCode.GATE_FAILED
+
+
+def cmd_channels_deliveries(args: argparse.Namespace, profile: Profile) -> ExitCode:
+    org = _org(args, profile)
+    _emit(
+        _client(profile).request(
+            "GET", f"/organizations/{org}/notification-channels/{args.channel}/deliveries"
+        )
+    )
+    return ExitCode.PASS
+
+
 def cmd_gate(args: argparse.Namespace, profile: Profile) -> ExitCode:
     org = _org(args, profile)
     client = _client(profile)
@@ -548,6 +602,33 @@ def _parser() -> argparse.ArgumentParser:
     ev_verify = evidence.add_parser("verify")
     ev_verify.add_argument("--run", required=True)
     ev_verify.set_defaults(handler=cmd_evidence_verify)
+
+    channels = subparsers.add_parser("channels", help="notification channels").add_subparsers(
+        dest="action"
+    )
+    channels.add_parser("list").set_defaults(handler=cmd_channels_list)
+    ch_add = channels.add_parser("add")
+    ch_add.add_argument("--name", required=True)
+    ch_add.add_argument(
+        "--kind",
+        required=True,
+        choices=["slack_webhook", "msteams_webhook", "generic_webhook", "email_smtp"],
+    )
+    ch_add.add_argument(
+        "--event", action="append", required=True, help="repeatable; an event type to subscribe to"
+    )
+    ch_add.add_argument(
+        "--endpoint-env-var", help="name of the variable holding the webhook URL (not the URL)"
+    )
+    ch_add.add_argument("--signing-secret-env-var")
+    ch_add.add_argument("--min-severity")
+    ch_add.set_defaults(handler=cmd_channels_add)
+    ch_test = channels.add_parser("test")
+    ch_test.add_argument("--channel", required=True)
+    ch_test.set_defaults(handler=cmd_channels_test)
+    ch_deliveries = channels.add_parser("deliveries")
+    ch_deliveries.add_argument("--channel", required=True)
+    ch_deliveries.set_defaults(handler=cmd_channels_deliveries)
 
     gate = subparsers.add_parser("gate", help="apply a security gate to a finished run")
     gate.add_argument("--run", required=True)

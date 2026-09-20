@@ -5,6 +5,8 @@ from app.audit.service import record_event
 from app.auth.dependencies import CurrentUser, DbSession
 from app.auth.security import create_access_token, hash_password, verify_password
 from app.core.config import get_settings
+from app.core.csrf import enforce as csrf_enforce
+from app.core.csrf import tokens as csrf_tokens
 from app.core.ratelimit import dependency as ratelimit
 from app.models.user import User
 from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, UserRead
@@ -18,6 +20,23 @@ def _set_session_cookie(response: Response, token: str) -> None:
         key=settings.session_cookie_name,
         value=token,
         httponly=True,
+        secure=settings.session_cookie_secure,
+        samesite="lax",
+        max_age=settings.access_token_expire_minutes * 60,
+        path="/",
+    )
+    # A CSRF token bound to the session just issued. Set together, so a
+    # session can never exist without one — a browser holding a session but no
+    # token would be unable to make any state-changing request, which is a
+    # broken product rather than a secure one.
+    response.set_cookie(
+        key=csrf_enforce.COOKIE_NAME,
+        value=csrf_tokens.issue(token, secret=settings.effective_csrf_secret),
+        # NOT httponly, on purpose: the page has to read this to echo it back.
+        # Safe because the token authenticates nothing by itself — it proves
+        # only that the request came from a page able to read this site's
+        # cookies, which is exactly the claim CSRF needs.
+        httponly=False,
         secure=settings.session_cookie_secure,
         samesite="lax",
         max_age=settings.access_token_expire_minutes * 60,
@@ -142,6 +161,7 @@ async def logout(response: Response, current_user: CurrentUser, db: DbSession) -
     await db.commit()
     settings = get_settings()
     response.delete_cookie(settings.session_cookie_name, path="/")
+    response.delete_cookie(csrf_enforce.COOKIE_NAME, path="/")
 
 
 @router.get("/me", response_model=UserRead)

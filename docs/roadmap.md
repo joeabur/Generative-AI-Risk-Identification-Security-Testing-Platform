@@ -1998,3 +1998,75 @@ headers again.
 - **No CAPTCHA, progressive delay, or device fingerprinting.**
 - **`MemoryStore` is single-process only** and is not the default; two API
   workers would each enforce the full limit.
+
+## Post-Phase-18: CSRF protection
+
+Required by §18 ("CSRF protection where cookie-based sessions are used") and
+§22, and the reason the Phase-17 dashboard shipped read-only.
+`docs/csrf.md` is the reference.
+
+### The scope decision is the control
+
+A token is required for unsafe methods authenticated **by cookie**, and for
+nothing else. Both halves matter and they fail in opposite directions:
+
+- too narrow, and the attack is wide open — the browser attaches the session
+  for whoever asks;
+- too wide, and every CLI invocation and CI gate breaks, for callers who were
+  never at risk, because a cross-site page cannot attach an `Authorization`
+  header to a request the browser sends on its own.
+
+Enforced as **middleware, not a per-route dependency**. A dependency protects
+the routes somebody remembered to decorate, and the one they forget is the one
+that matters. The check narrows by the request rather than by a maintained
+list, so a route added later is covered by default.
+
+### Not plain double-submit, and the difference is the whole point
+
+The textbook scheme sets a random value in a cookie and requires the same value
+in a header. It rests on an attacker being unable to **read** the cookie — which
+same-origin policy provides — but **not** on being unable to **write** one.
+A sibling subdomain setting a cookie for the parent domain, or a MITM on a
+plain-HTTP subdomain, supplies both halves and they trivially match.
+
+So the token carries an HMAC over the session cookie's own value. A planted
+pair does not verify against the victim's session, and a token minted for a
+different session fails the same way — asserted end to end by taking a valid
+token from one account and using it against another.
+
+It is deliberately not the session token reused: that would put a credential
+somewhere a page's JavaScript must read it, turning any injection bug into
+session theft.
+
+### A stale reason is a false statement
+
+The dashboard's disabled controls said *"this platform has no CSRF token"*.
+That became false the moment this shipped. Leaving it would have been a lie in
+the product's own UI, of exactly the kind this project spends its effort
+avoiding — so the reason was replaced: the dashboard is read-only because no
+write handlers are built, which is a scope decision, not a security constraint.
+
+`tests/test_web.py::test_every_dashboard_route_is_a_get` stays, but for a
+different reason, now written down: `GET` being exempt from the CSRF check is
+only sound while every dashboard route is one.
+
+### A control I could not prove
+
+Replacing `hmac.compare_digest` with `==` leaves the entire CSRF suite green.
+A timing property is not observable from a functional assertion. The code is
+correct, the test suite is not evidence of it, and both the module and
+`docs/csrf.md` say so rather than letting a passing suite imply coverage.
+
+Six of the seven controls here were verified by breaking them; that one is the
+seventh, and it is recorded as unproven rather than quietly counted.
+
+### Deferrals
+
+- **Login CSRF is open.** `/auth/login` and `/auth/register` are exempt
+  because no session exists to bind a token to, so an attacker can forge a
+  request signing a victim into the *attacker's* account. Closing it needs a
+  pre-session token issued to anonymous visitors. It is now the residual in the
+  security review's gap table rather than an unnoticed hole.
+- **No dashboard write actions.** The machinery a form needs is in place
+  (`csrf_token` form field accepted), but no handler uses it yet. That is the
+  natural next piece of work.

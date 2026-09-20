@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from app.api.v1.router import api_router
 from app.core.config import get_settings
 from app.core.constants import API_VERSION_PREFIX, PRODUCT_NAME
+from app.core.csrf import enforce as csrf
 from app.schemas.errors import ErrorDetail, ErrorResponse
 from app.web.router import STATIC_DIR as WEB_STATIC_DIR
 from app.web.router import router as web_router
@@ -36,6 +37,29 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def csrf_middleware(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
+        """Enforce CSRF before a handler runs.
+
+        Middleware rather than a per-route dependency, deliberately: a
+        dependency protects the routes somebody remembered to decorate, and
+        the one they forget is the one that matters. This covers every route
+        in the application, including any added later, and narrows by the
+        *request* — unsafe method, cookie-authenticated, not exempt — rather
+        than by a list.
+
+        A form field cannot be read here without consuming the body, so the
+        header is what middleware checks; the dashboard's own form posts are
+        checked in their handlers, which have the parsed form.
+        """
+        try:
+            csrf.check(request)
+        except HTTPException as exc:
+            return await http_exception_handler(request, exc)
+        return await call_next(request)
 
     @app.middleware("http")
     async def request_id_middleware(

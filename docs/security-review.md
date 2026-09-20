@@ -158,7 +158,7 @@ Stated plainly, because a review that lists only strengths is marketing.
 | Rate limiting fails open when Redis is unavailable | Guessing is then bounded only by Argon2's cost; logged at error level, alert on it |
 | No server-side JWT revocation | A stolen session token is valid until it expires |
 | No encryption at rest for evidence | A host compromise yields redacted evidence bundles |
-| No CSRF token on cookie-authenticated routes | `SameSite=Lax` is the only protection; the dashboard is read-only because of it |
+| Login CSRF is unprotected | `/auth/login` and `/auth/register` are exempt; an attacker can sign a victim into the attacker's account |
 | No signature verification for plugins | The allowlist and an optional hash are the controls |
 | Malware scanning of dependencies absent | Container, licence, EOL and name-confusion analysis exist; nothing checks a package for a malicious payload |
 | DAST scanners are not gated at the socket | Nuclei and ZAP open their own connections — see the Phase 15 section below |
@@ -402,3 +402,45 @@ rebuilt every error response and silently dropped `exc.headers`, so the 429
 arrived with no `Retry-After` — telling a client it was throttled but not for
 how long. Pre-existing, and it would have applied equally to
 `WWW-Authenticate` or `Allow`.
+
+## CSRF protection (§18, §22)
+
+Cookie-authenticated state changes now require a token. `docs/csrf.md` has the
+detail; three points bear on a deployment decision.
+
+**The scope is the control.** A token is required for unsafe methods
+authenticated by cookie, and for nothing else. Demanding one from
+Bearer-authenticated callers would break every CLI invocation and CI gate for
+callers who were never at risk — a cross-site page cannot attach an
+`Authorization` header. Both halves are asserted; requiring a token everywhere
+was checked by doing it and watching the API-client test fail.
+
+**It is not plain double-submit.** The textbook version rests on an attacker
+being unable to *read* a cookie, not on being unable to *write* one — so a
+sibling subdomain, or a MITM on a plain-HTTP subdomain, supplies both halves
+and they match. The token here carries an HMAC over the session cookie's own
+value, so a planted pair does not verify against the victim's session. Checked
+by removing the session binding and watching the cross-session test fail.
+
+**Enforced as middleware, not a per-route decorator.** A decorator protects the
+routes somebody remembered to annotate. The check narrows by the request —
+unsafe method, cookie-authenticated, not exempt — so a route added later is
+covered without anybody remembering.
+
+Two things it does **not** do, stated because a reader would otherwise assume
+them:
+
+- **Login CSRF remains open**, since `/auth/login` and `/auth/register` have no
+  session to bind a token to. An attacker can sign a victim into the attacker's
+  account. It is now the residual in the gap table above.
+- **The constant-time signature comparison is not covered by a test.**
+  Replacing `hmac.compare_digest` with `==` leaves the suite green — a timing
+  property is not observable from a functional assertion. The code is correct;
+  the passing suite is not evidence of it. Said plainly rather than left for a
+  reader to infer from the test names.
+
+**The dashboard's disabled controls no longer cite CSRF.** They said "this
+platform has no CSRF token", which became false the moment this shipped. A
+stale reason on a disabled control is a false statement in the product, so it
+was replaced: the dashboard is read-only because no write handlers are built,
+which is a scope decision rather than a security constraint.

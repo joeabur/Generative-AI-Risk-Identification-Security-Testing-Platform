@@ -45,10 +45,16 @@ LAB_URL = f"http://{LAB_HOST}"
 def test_every_dashboard_route_is_a_get() -> None:
     """Read-only is the whole CSRF story, so it is asserted, not intended.
 
-    The dashboard authenticates by session cookie and this platform has no
-    CSRF token (`docs/security-review.md` lists that gap). A cookie-authenticated
-    route that changed state would therefore be forgeable from any page the
-    operator had open. Adding one must break a test rather than a deployment.
+    Originally because this platform had no CSRF token. It has one now
+    (`docs/csrf.md`), so the constraint is gone and what remains is a scope
+    decision: no write handlers are built, and until they are, a non-GET route
+    here would be one nothing tests.
+
+    The test stays because the exemption it guards is still load-bearing
+    elsewhere — `app/core/csrf/enforce.py` treats `GET` as safe, and that is
+    only true while every dashboard route is one. Adding a write route means
+    changing this test deliberately *and* giving its handler a form-field CSRF
+    check, which is the right order for that change.
 
     Verified by adding a `@router.post("/x")` handler and watching this fail.
     """
@@ -367,6 +373,10 @@ async def test_a_disabled_action_says_why_and_names_what_does_the_job(
     assert page.status_code == 200
     assert "<button disabled>" in page.text
     assert "read-only" in page.text
+    # The reason must be the *current* one. It previously cited the absence of
+    # CSRF protection, which is no longer true — a stale reason on a disabled
+    # control is a false statement in the product.
+    assert "no CSRF token" not in page.text
     assert "/api/v1/organizations/{organization_id}/runs" in page.text
 
     # Every disabled button on the page is followed by an explanation.

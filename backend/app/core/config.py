@@ -101,6 +101,24 @@ class Settings(BaseSettings):
     def effective_rate_limit_pepper(self) -> str:
         return self.rate_limit_pepper or self.jwt_secret
 
+    # --- CSRF (§18, §22) ------------------------------------------------
+    #: On by default. A control that ships off is a control nobody has, and
+    #: the only callers it can inconvenience are cookie-authenticated browser
+    #: sessions — API keys and Bearer tokens are unaffected by design.
+    csrf_protection_enabled: bool = Field(default=True, alias="AEGIS_CSRF_ENABLED")
+    csrf_secret: str | None = Field(default=None, alias="AEGIS_CSRF_SECRET")
+
+    @property
+    def effective_csrf_secret(self) -> str:
+        """The key CSRF tokens are signed with.
+
+        Defaults to the JWT secret for the same reason the rate-limit pepper
+        does: both are server-side secrets with the same lifetime, and
+        requiring a third one to be configured is how a deployment ends up
+        with none of them set deliberately.
+        """
+        return self.csrf_secret or self.jwt_secret
+
     def model_post_init(self, __context: object) -> None:
         if (
             self.environment == "production"

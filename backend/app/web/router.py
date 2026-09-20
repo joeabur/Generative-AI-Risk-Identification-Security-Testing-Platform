@@ -243,9 +243,10 @@ async def targets_page(
 #: or says why it does not; a greyed-out button with no explanation fails that
 #: as surely as one that silently does nothing.
 _CSRF_REASON = (
-    "The dashboard is read-only: it authenticates by session cookie and this "
-    "platform has no CSRF token, so a state-changing page route would be "
-    "forgeable. Use the API or the CLI."
+    "The dashboard is read-only: write handlers are not built. CSRF protection "
+    "now exists (docs/csrf.md), so this is a scope decision rather than a "
+    "security constraint — the reason it was one has been removed. Use the API "
+    "or the CLI."
 )
 
 

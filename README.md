@@ -59,6 +59,11 @@ agent ships — this platform does not run inside anybody's process. See
 keylessly with Sigstore and carry build provenance; verify one before running it
 with the commands in [`docs/releasing.md`](docs/releasing.md).
 
+Cookie-authenticated state changes require a CSRF token, bound to the session
+so a planted cookie pair cannot forge one — and Bearer-authenticated API and
+CLI callers are deliberately exempt, because they were never at risk. See
+[`docs/csrf.md`](docs/csrf.md).
+
 Authentication endpoints are rate limited — two dimensions, throttled never
 locked out, and unable to tell a caller whether an account exists. See
 [`docs/rate-limiting.md`](docs/rate-limiting.md).

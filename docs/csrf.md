@@ -1,0 +1,114 @@
+# CSRF protection
+
+Cookie-authenticated, state-changing requests must carry a CSRF token
+(`docs/BUILD_SPEC.md` §18, §22).
+
+## Where the check applies
+
+| Request | Token required? | Why |
+|---|---|---|
+| `POST` with a session cookie | **yes** | The browser attaches the session for whoever asks; this is the attack |
+| `POST` with `Authorization: Bearer` | no | A cross-site page cannot attach that header |
+| `GET`, `HEAD`, `OPTIONS` | no | Required to be side-effect-free |
+| `POST /auth/login`, `/auth/register`, `/auth/logout` | no | No session exists yet — see the residual below |
+
+Getting the *scope* wrong ruins it in either direction. Too narrow and the
+attack is wide open. Too wide — demanding a token from Bearer callers — breaks
+every CLI invocation and CI gate, for callers who were never at risk.
+`tests/security/test_csrf.py` asserts both halves, because a control that is
+merely present is not one applied where it matters.
+
+## The token is bound to the session
+
+Textbook double-submit sets a random value in a cookie and requires the same
+value in a header. It rests on an attacker being unable to **read** the cookie
+— which same-origin policy gives you — but **not** on an attacker being unable
+to **write** one. Anything that can set a cookie for the site supplies both
+halves and they trivially match:
+
+- a sibling subdomain setting a cookie for the parent domain, which is a
+  cookie-scoping quirk rather than an XSS;
+- a MITM on a plain-HTTP subdomain, since cookies ignore ports and are only
+  origin-bound by the `Secure` flag.
+
+So the token here carries an **HMAC over the session cookie's own value**:
+
+```
+token = <nonce>.<HMAC(secret, nonce + session_value)>
+```
+
+An attacker who plants cookies cannot produce a token that verifies against
+*the victim's* session, because the HMAC needs the server's secret. A token
+minted for a different session fails the same way — asserted end to end by
+taking a valid token from one account and using it against another.
+
+It is deliberately **not** the session token reused. That would put a
+credential somewhere a page's JavaScript must read it, turning any
+content-injection bug into session theft. This token is derived,
+single-purpose, and useless for authentication.
+
+## Using it
+
+Both cookies are set together at login and registration, so a session can never
+exist without a token:
+
+```
+Set-Cookie: aegis_session=...; HttpOnly; SameSite=Lax
+Set-Cookie: aegis_csrf=<nonce>.<signature>; SameSite=Lax
+```
+
+`aegis_csrf` is deliberately **not** `HttpOnly` — the page has to read it to
+echo it back. That is safe precisely because the token authenticates nothing on
+its own.
+
+```js
+fetch("/api/v1/organizations", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json",
+    "X-CSRF-Token": readCookie("aegis_csrf"),
+  },
+  body: JSON.stringify({ name: "Acme" }),
+});
+```
+
+Server-rendered forms cannot set a header, so a `csrf_token` form field is
+accepted too.
+
+A missing or invalid token is **403** with a message naming the header. No
+attacker learns anything from it, and a developer who has got it wrong learns
+exactly what to send.
+
+## Enforced as middleware, not a decorator
+
+A per-route dependency protects the routes somebody remembered to decorate, and
+the one they forget is the one that matters. The check runs as middleware over
+every route, narrowing by the *request* — unsafe method, cookie-authenticated,
+not exempt — rather than by a list that has to be maintained.
+
+## Configuration
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `AEGIS_CSRF_ENABLED` | `true` | Off only when an operator says so |
+| `AEGIS_CSRF_SECRET` | `JWT_SECRET` | Signing key for tokens |
+
+## What this does not cover
+
+Stated rather than implied:
+
+- **Login CSRF is open.** `/auth/login` and `/auth/register` are exempt
+  because no session exists to bind a token to. An attacker can therefore
+  forge a request that signs a victim into the *attacker's* account, so the
+  victim's subsequent actions are recorded against it. Closing it needs a
+  pre-session token issued to anonymous visitors. Accepted deliberately and
+  recorded here, not overlooked.
+- **The constant-time comparison is not covered by a test.** Replacing
+  `hmac.compare_digest` with `==` leaves the whole suite green, because a
+  timing property is not observable from a functional assertion. The code is
+  correct; the passing suite is not evidence of it.
+- **`SameSite=Lax` still does most of the work in practice** for top-level
+  navigations. This is defence in depth, not a replacement for it.
+- **The dashboard has no write actions.** It is read-only because none are
+  built, not because of CSRF any more. That reason was removed from the
+  disabled controls when it stopped being true.

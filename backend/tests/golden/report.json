@@ -21,6 +21,48 @@
         "reason": "Advisory lookup is disabled by default (no outbound disclosure)."
       }
     ],
+    "pillar_coverage": [
+      {
+        "detail": "Ran and reported against this target.",
+        "pillar": "AI security",
+        "tested": true
+      },
+      {
+        "detail": "Ran and reported against this target.",
+        "pillar": "API security",
+        "tested": true
+      },
+      {
+        "detail": "Ran and reported against this target.",
+        "pillar": "SAST",
+        "tested": true
+      },
+      {
+        "detail": "This target is registered as 'llm_app'; the crawler and the DAST scanners run only against a target registered as 'web_app'.",
+        "pillar": "DAST",
+        "tested": false
+      },
+      {
+        "detail": "No source repository is configured, so no dependency manifest was read.",
+        "pillar": "SCA",
+        "tested": false
+      },
+      {
+        "detail": "No source repository is configured.",
+        "pillar": "Secrets",
+        "tested": false
+      },
+      {
+        "detail": "No source repository is configured.",
+        "pillar": "IaC",
+        "tested": false
+      },
+      {
+        "detail": "No runtime-protection engine exists on this platform. This target declares no runtime protection.",
+        "pillar": "RASP",
+        "tested": false
+      }
+    ],
     "reported_against": {
       "cwe": [
         "CWE-78"

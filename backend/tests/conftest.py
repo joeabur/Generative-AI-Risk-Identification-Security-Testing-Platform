@@ -67,9 +67,29 @@ _TABLES = [
 
 @pytest_asyncio.fixture(autouse=True)
 async def _clean_database() -> AsyncGenerator[None, None]:
-    yield
+    """Start every test from an empty database.
+
+    Cleaning **before** the test, not after, and that ordering is the whole
+    point. `TRUNCATE` takes an ACCESS EXCLUSIVE lock, so it waits for any
+    session an earlier test left open. Run as teardown, that wait can outlast
+    the teardown itself and land in the middle of the *next* test — which then
+    watches its own freshly-registered user disappear and fails with a
+    confusing 401 several calls later.
+
+    That is not hypothetical: it is what made five tests fail in a full run
+    under `--cov` (which is how CI runs) while every one of them passed alone
+    and passed in a full run without coverage. Coverage slows execution by
+    about a quarter, which was enough to widen the window.
+
+    Cleaning at setup gives the same guarantee — no test sees another's rows —
+    and cannot corrupt a running test: a blocked truncate now delays the test
+    that is waiting for it instead of sabotaging the one already going. The
+    only difference is that the last test's rows outlive the session, which
+    costs nothing in a disposable test database.
+    """
     async with test_engine.begin() as conn:
         await conn.execute(text(f"TRUNCATE TABLE {', '.join(_TABLES)} RESTART IDENTITY CASCADE"))
+    yield
 
 
 @pytest_asyncio.fixture

@@ -317,3 +317,40 @@ outside the directory the static check scans, which is worse than an obvious
 one because it looks compliant. A test asserts the checker imports no HTTP
 library, and that a failed upstream lookup is reported as a gap rather than as
 "current".
+
+## Post-Phase-18: a gap this platform created for itself
+
+**The coverage section did not name DAST or RASP.** §27 requires the report's
+framework-coverage section to name every pillar that did not run. It was
+derived from the engines' own "not tested" markers, which cannot satisfy that:
+a pillar that never ran emits no marker. DAST was missing from every report for
+three phases and RASP for one — both added by this project's own later phases,
+neither appearing in the one section whose job is to say what was not covered.
+
+It is now enumerated: a fixed pillar list, one verdict each, every time, in
+every format. An engine that degraded to a "not tested" marker does not count
+as coverage — that would move the same lie somewhere else in the report.
+
+Worth stating plainly because it is the failure mode this document exists to
+catch: **coverage honesty derived from what produced output degrades to silence
+exactly when coverage is worst.**
+
+**A test-isolation race that only appeared under CI's own flags.** Five tests
+failed in a full run with `--cov` — which is how CI runs — while passing alone
+and passing in a full run without it. The autouse `TRUNCATE` ran as teardown,
+took an ACCESS EXCLUSIVE lock, waited on a session an earlier test had left
+open, and could complete in the middle of the *next* test, wiping its user. It
+now runs at setup, where a blocked truncate delays the waiting test instead of
+sabotaging the running one.
+
+**The coverage gate now fails the build.** §24's three floors were reported and
+not enforced. The overall floor is the weakest of the three on its own, so the
+per-package floors are checked separately, with `core/scope/` held to its own
+95% rather than diluted into `core/`. Measured first, met with headroom: 97.8%
+scope, 91.6% core, 91.8% overall.
+
+**The ML-BOM ships separately and is nearly empty.** No weights, no
+checkpoints, no training data, no fine-tune. The demo lab's "assistant" is a
+string function and the AI layer calls an operator-supplied endpoint named by
+environment variable — both recorded as what they are rather than padded into a
+model inventory.

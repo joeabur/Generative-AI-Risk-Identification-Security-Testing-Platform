@@ -1809,3 +1809,115 @@ declares its permissions and that none uses `pull_request_target`.
   the extension point. Adding an engine is one line in
   `RUNTIME_PROTECTION_ENGINES` and a deliberate change to three tests, which is
   the whole point of the shape.
+
+## Post-Phase-18: closing the definition of done
+
+All eighteen phases were built, so this pass worked §27's checklist rather than
+a phase. Four items were genuinely open; one of them was a gap this project
+created for itself.
+
+### The coverage section did not name DAST or RASP
+
+§27's addendum is explicit: *the report's framework-coverage section names
+SAST/DAST/SCA/Secrets/IaC/RASP explicitly whenever any of them were not run.*
+
+It did not. The section was derived entirely from the engines' own "not tested"
+markers, which **cannot** satisfy that requirement, because a pillar that never
+ran emits no marker. DAST went unmentioned in every report for three phases and
+RASP for one — added in Phase 15 and Phase 18 respectively, by me, without
+either appearing in the one section whose job is to say what was not covered.
+No test noticed, because nothing enumerated.
+
+The fix is `PILLARS` plus `PillarCoverage`: a fixed list, one verdict per
+pillar, every time. A pillar counts as tested only when a real, non-marker
+result carries one of its probe-id prefixes — an engine that degraded to a "not
+tested" marker tested nothing, and counting it would move the same lie to a
+different part of the report. The untested pillars are now also named in the
+executive summary, because "some areas were not tested" is how a gap goes
+unnoticed by the person who reads one page.
+
+Rendered in Markdown, HTML, PDF and the canonical JSON, so a consumer can tell
+"DAST found nothing" from "DAST never ran" without parsing prose. Four controls
+verified by breaking them; the golden snapshots were re-recorded and the diff is
+additive.
+
+**The lesson is the one this project keeps relearning.** Coverage honesty
+derived from what produced output degrades to silence exactly when coverage is
+worst. It has to be enumerated.
+
+### A test-isolation race that only appeared under coverage
+
+Five tests failed in a full run with `--cov` — which is how CI runs — while
+every one passed alone, passed with coverage alone, and passed in a full run
+without it. The symptom was a test watching its own freshly-registered user
+vanish, failing several calls later with a confusing 401.
+
+Cause: the autouse `TRUNCATE` ran as **teardown**. `TRUNCATE` takes an ACCESS
+EXCLUSIVE lock and waits for any session an earlier test left open, and that
+wait could outlast the teardown and land in the middle of the *next* test.
+Coverage slows execution by about a quarter, which was enough to widen the
+window.
+
+It now cleans at **setup**. Same guarantee — no test sees another's rows — but a
+blocked truncate delays the test waiting for it instead of sabotaging the one
+already running. The only difference is that the last test's rows outlive the
+session, which costs nothing in a disposable database.
+
+This was pre-existing and unrelated to the phases' own work. It is recorded
+because a flake that only bites under CI's flags is worse than one that bites
+everywhere.
+
+### The coverage gate is enforced, not reported
+
+§24 sets three floors — ≥80% overall, ≥85% on `core/`, ≥95% on `core/scope/` —
+and CI reported a number without failing on any of them. Only the overall floor
+is expressible as `--cov-fail-under`, and on its own it is the weakest of the
+three: a large, well-tested API surface keeps the headline healthy while the
+scope engine, which is the entire safety boundary, rots underneath it.
+
+`scripts/coverage_floors.py` enforces the per-package floors, with the scope
+package counted against its own stricter floor rather than diluted into
+`core/`. Measured before the gate was set, and met with real headroom:
+
+| Package | Measured | Floor |
+|---|---|---|
+| `app/core/scope/` | 97.8% | 95% |
+| `app/core/` | 91.6% | 85% |
+| overall | 91.8% | 80% |
+
+The floors are the spec's numbers, not today's. A floor set to wherever the
+suite happens to sit can only ever be met.
+
+### The ML-BOM, and why it is nearly empty
+
+§27's addendum: *software SBOM and ML-BOM ship as separate labelled components
+of one release artifact, never merged into one undifferentiated bill of
+materials.* Only the software half existed.
+
+`scripts/mlbom.py` writes the other half as its own labelled document. Its model
+inventory is **empty**, and that is the answer rather than an omission: this
+repository ships no weights, no checkpoints, no training data and no fine-tune.
+Two things that could be mistaken for models are recorded as what they are — the
+demo lab's assistant is a deterministic string function, and the AI layer calls
+an endpoint an operator supplies at run time by environment-variable *name*. A
+generator that padded the list to look complete would make the document
+worthless for the one question it exists to answer.
+
+It emits CycloneDX **1.6**, not the 1.7 §23 names, because `cyclonedx-python-lib`
+tops out at 1.6 and the software SBOM is generated at 1.6 too. Writing "1.7"
+into a document no 1.7 validator had checked would be a version claim nobody
+verified. A test pins the emitted version to what the library can actually
+produce, so the two halves cannot drift apart.
+
+### Still open, and honestly so
+
+- **The 10-minute `docker compose up --build` walkthrough is unverified.**
+  Docker Hub blob pulls are refused by this environment's egress proxy (403, an
+  organization policy denial), and no Docker daemon runs here. The compose file
+  and its services are asserted by tests; the end-to-end timing claim is not.
+- **No release cut**, so `release.yml` and `sbom.yml` have never run end to end.
+- **CycloneDX 1.7** once the tooling supports it.
+- **No auth rate limiting, no CSRF token, no server-side JWT revocation, no
+  evidence encryption at rest.** All four remain in the security review's gap
+  table. Rate limiting is still the one most likely to matter first in a real
+  deployment.

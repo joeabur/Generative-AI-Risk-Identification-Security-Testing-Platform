@@ -76,7 +76,17 @@ jobs:
 
       - name: Pytest
         working-directory: backend
-        run: python -m pytest -q --cov=app --cov-report=term-missing
+        # §24's coverage gate, enforced rather than reported. The overall
+        # threshold is the one pytest-cov can fail on directly; the per-package
+        # floors (core/ and core/scope/) are checked by the step below, because
+        # an overall number can stay healthy while the part that matters most
+        # rots.
+        run: python -m pytest -q --cov=app --cov=aegis_cli --cov-report=term-missing
+             --cov-report=json:coverage.json --cov-fail-under=80
+
+      - name: Per-package coverage floors
+        working-directory: backend
+        run: python -m scripts.coverage_floors coverage.json
 
   frontend:
     name: Frontend (lint, typecheck, test, build)

@@ -19,6 +19,7 @@ import pytest
 from jsonschema import Draft7Validator
 
 from app.core.reporting.build import to_canonical_json
+from app.core.reporting.model import PILLARS
 from app.core.reporting.render import (
     CSV_COLUMNS,
     PdfUnavailableError,
@@ -223,3 +224,147 @@ def test_an_assessment_does_not_claim_to_be_a_retest() -> None:
     rendered = render_markdown(sample_report(), Template.TECHNICAL)
     assert "was an assessment, not a retest" in rendered
     assert "reproduced" not in rendered.split("## Retest results")[1].split("## Appendix")[0]
+
+
+# --- pillar coverage (docs/BUILD_SPEC.md §27 addendum) --------------------
+#
+# "Report's framework-coverage section names SAST/DAST/SCA/Secrets/IaC/RASP
+# explicitly whenever any of them were not run."
+#
+# The old coverage section was derived entirely from the engines' own "not
+# tested" markers, which cannot satisfy that: a pillar that never ran emits no
+# marker, so its absence from the report is exactly what reads as a clean
+# result. DAST went unmentioned for three phases and RASP for one, and no test
+# noticed, because nothing enumerated.
+
+
+@pytest.mark.parametrize("pillar", list(PILLARS))
+@pytest.mark.parametrize("template", list(Template))
+def test_every_pillar_is_named_in_every_markdown_template(pillar: str, template: Template) -> None:
+    """Named, not merely accounted for internally.
+
+    Parametrised over the pillars rather than asserting against a written list,
+    so adding a pillar to `PILLARS` and forgetting the renderer is a failure
+    rather than a silent omission — which is the failure this replaces.
+
+    Verified by removing the pillar-coverage block from `_framework_coverage`.
+    """
+    body = render_markdown(sample_report(), template)
+    assert pillar in body, (
+        f"{template.value} never names the {pillar} pillar. A reader cannot tell "
+        "'found nothing' from 'never ran' about a pillar the report does not mention."
+    )
+
+
+@pytest.mark.parametrize("pillar", list(PILLARS))
+def test_every_pillar_is_named_in_the_canonical_json(pillar: str) -> None:
+    payload = json.loads(to_canonical_json(sample_report()))
+    entries = payload["coverage"]["pillar_coverage"]
+    assert [item["pillar"] for item in entries] == list(PILLARS)
+    named = next(item for item in entries if item["pillar"] == pillar)
+    # Every entry carries a verdict and a reason — a `tested: false` with no
+    # detail would tell a consumer nothing they could act on.
+    assert isinstance(named["tested"], bool)
+    assert named["detail"].strip()
+
+
+@pytest.mark.parametrize("pillar", list(PILLARS))
+def test_every_pillar_is_named_in_the_html(pillar: str) -> None:
+    assert pillar in render_html(sample_report())
+
+
+def test_an_untested_pillar_is_named_in_the_executive_summary() -> None:
+    """The summary is what a reader who reads one page reads.
+
+    "Some areas were not tested" is how a gap goes unnoticed, so the untested
+    pillars are listed by name there too.
+
+    Verified by replacing the names with a count: this fails.
+    """
+    body = render_markdown(sample_report(), Template.EXECUTIVE)
+    summary = body.split("## Authorization")[0]
+    for pillar in ("DAST", "RASP"):
+        assert pillar in summary, f"the executive summary does not name {pillar}"
+
+
+def test_a_pillar_that_only_produced_a_not_tested_marker_is_not_counted_as_tested() -> None:
+    """A degraded engine tested nothing, and must not read as though it did.
+
+    An engine whose tool was missing emits a "Not tested:" marker under its own
+    probe id. Counting that as coverage would move the lie from one part of the
+    report to another.
+
+    Verified by dropping the marker check from `_pillar_coverage`: SAST is then
+    reported as tested on the strength of a marker saying it did not run.
+    """
+    from app.core.reporting.build import _pillar_coverage
+
+    class _Row:
+        def __init__(self, probe_id: str, title: str) -> None:
+            self.probe_id = probe_id
+            self.title = title
+
+    class _Target:
+        kind = "llm_app"
+        code_repo_ref = "git+https://example.test/repo.git#main"
+        adapter_kind = "chat_http"
+        runtime_protection: list[object] = []
+
+    marker_only = _pillar_coverage(
+        [_Row("appsec.sast.semgrep", "Not tested: Semgrep (static analysis)")],  # type: ignore[list-item]
+        _Target(),  # type: ignore[arg-type]
+    )
+    sast = next(item for item in marker_only if item.pillar == "SAST")
+    assert sast.tested is False
+    assert sast.detail.strip()
+
+    real = _pillar_coverage(
+        [_Row("appsec.sast.semgrep", "Use of eval on untrusted input")],  # type: ignore[list-item]
+        _Target(),  # type: ignore[arg-type]
+    )
+    assert next(item for item in real if item.pillar == "SAST").tested is True
+
+
+def test_coverage_is_enumerated_not_derived_from_what_produced_output() -> None:
+    """A run that produced nothing at all still names all eight pillars.
+
+    This is the property the requirement is really about. Every other
+    formulation — "list the markers", "list what ran" — degrades to silence
+    exactly when coverage is worst.
+    """
+    from app.core.reporting.build import _pillar_coverage
+
+    class _Target:
+        kind = "api"
+        code_repo_ref = None
+        adapter_kind = None
+        runtime_protection: list[object] = []
+
+    coverage = _pillar_coverage([], _Target())  # type: ignore[arg-type]
+    assert [item.pillar for item in coverage] == list(PILLARS)
+    assert all(item.tested is False for item in coverage)
+    assert all(item.detail.strip() for item in coverage)
+
+
+def test_a_target_declaring_runtime_protection_says_none_of_it_was_measured() -> None:
+    """The RASP line changes when a target actually claims something.
+
+    "This target declares no runtime protection" and "declares runtime
+    protection, and none of it was measured" are different facts, and only the
+    second is a gap somebody should act on.
+    """
+    from app.core.reporting.build import _pillar_coverage
+
+    class _Target:
+        kind = "api"
+        code_repo_ref = None
+        adapter_kind = None
+        runtime_protection = [{"kind": "waf", "evidenced": "claimed"}]
+
+    rasp = next(
+        item
+        for item in _pillar_coverage([], _Target())  # type: ignore[arg-type]
+        if item.pillar == "RASP"
+    )
+    assert rasp.tested is False
+    assert "none of it was measured" in rasp.detail

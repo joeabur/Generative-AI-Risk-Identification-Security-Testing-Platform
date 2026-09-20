@@ -120,6 +120,15 @@ jobs:
           cyclonedx-py environment --output-format json \
             --outfile ../dist/aegis-sbom.cdx.json
 
+      - name: Generate the ML-BOM as its own document
+        working-directory: backend
+        # Separate and labelled, never merged into the software SBOM
+        # (§27 addendum). It records that this release ships no model.
+        run: |
+          python -m scripts.mlbom \
+            --version "${{ github.event.inputs.tag || github.ref_name }}" \
+            --out ../dist/aegis-mlbom.cdx.json
+
       - name: Record the artifact digests
         id: hashes
         run: |

@@ -106,9 +106,17 @@ def _executive_summary(report: ReportData) -> list[str]:
         f"- Low: {counts.get('LOW', 0)}",
         "",
     ]
-    if report.not_tested:
+    untested = [item.pillar for item in report.pillar_coverage if not item.tested]
+    if untested:
         # §14: silence about a pillar is not an acceptable summary. A reader
-        # who sees "no findings" has to be told what was not looked at.
+        # who sees "no findings" has to be told what was not looked at — and
+        # told by name, because "some areas" is how a gap goes unnoticed.
+        out += [
+            f"**Not tested:** {', '.join(untested)}. "
+            "See Framework coverage for why each did not run.",
+            "",
+        ]
+    if report.not_tested:
         out += [
             f"{len(report.not_tested)} area(s) were **not tested** in this assessment; "
             "see Framework coverage for the list and the reasons.",
@@ -319,6 +327,14 @@ def _framework_coverage(report: ReportData) -> list[str]:
         out += [""]
     else:
         out += ["No framework category had a finding reported against it.", ""]
+
+    # Every pillar, named, whether or not it ran. §27's addendum asks for
+    # exactly this: a reader must not have to infer that DAST was absent from
+    # the fact that nothing mentions it.
+    out += ["### Pillar coverage", "", "| Pillar | Status | Detail |", "|---|---|---|"]
+    for pillar in report.pillar_coverage:
+        out += [f"| {pillar.pillar} | {pillar.label} | {pillar.detail} |"]
+    out += [""]
 
     out += ["### Not tested", ""]
     if report.not_tested:

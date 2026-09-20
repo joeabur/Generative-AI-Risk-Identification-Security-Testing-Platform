@@ -119,6 +119,19 @@ Ordered by risk score. Effort bands are not estimated by this tool.
 - **owasp_asvs**: V5.3.8
 - **owasp_llm**: LLM01, LLM06
 
+### Pillar coverage
+
+| Pillar | Status | Detail |
+|---|---|---|
+| AI security | tested | Ran and reported against this target. |
+| API security | tested | Ran and reported against this target. |
+| SAST | tested | Ran and reported against this target. |
+| DAST | not tested | This target is registered as 'llm_app'; the crawler and the DAST scanners run only against a target registered as 'web_app'. |
+| SCA | not tested | No source repository is configured, so no dependency manifest was read. |
+| Secrets | not tested | No source repository is configured. |
+| IaC | not tested | No source repository is configured. |
+| RASP | not tested | No runtime-protection engine exists on this platform. This target declares no runtime protection. |
+
 ### Not tested
 
 - **dependency advisories** — Advisory lookup is disabled by default (no outbound disclosure).

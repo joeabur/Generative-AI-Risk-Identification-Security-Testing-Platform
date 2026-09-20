@@ -17,8 +17,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.measure.asr import DEFAULT_RULE
 from app.core.probes.models import Severity
 from app.core.reporting.model import (
+    PILLARS,
     SEVERITY_ORDER,
     NotTested,
+    PillarCoverage,
     ReportData,
     ReportFinding,
     RetestRecord,
@@ -102,6 +104,107 @@ def _not_tested_from(results: list[ScanResultRecord]) -> list[NotTested]:
             )
         )
     return gaps
+
+
+#: Which probe-id prefixes belong to which pillar. Prefixes rather than an
+#: explicit engine list: a new Semgrep-family engine should count as SAST
+#: without anybody remembering to add it here, and one that does not match any
+#: prefix is better reported as an untested pillar than silently attributed.
+_PILLAR_PREFIXES: dict[str, tuple[str, ...]] = {
+    "AI security": ("ai.",),
+    "API security": ("api.", "graphql."),
+    "SAST": ("appsec.sast.",),
+    "DAST": ("dast.",),
+    "SCA": ("appsec.sca.", "appsec.supplychain.", "appsec.container."),
+    "Secrets": ("appsec.secrets.",),
+    "IaC": ("appsec.iac.",),
+    "RASP": ("rasp.",),
+}
+
+
+def _pillar_coverage(results: list[ScanResultRecord], target: Target) -> list[PillarCoverage]:
+    """One entry per pillar, always — that is the whole requirement.
+
+    The §27 addendum asks the coverage section to name
+    SAST/DAST/SCA/Secrets/IaC/RASP **explicitly whenever any of them were not
+    run**. Deriving the section from whatever produced output cannot satisfy
+    that: a pillar that never ran produces nothing, and its absence from the
+    report is exactly what reads as a clean result.
+
+    So `PILLARS` is enumerated and every entry gets a verdict. A pillar counts
+    as tested when a real (non-marker) result carries one of its probe-id
+    prefixes — because an engine that was configured but degraded to a "not
+    tested" marker did not test anything, and saying otherwise would be the
+    same lie in a different place.
+
+    This section is why DAST and RASP were missing for three phases: the old
+    code listed the AppSec pillars in prose, and adding a pillar did not force
+    anyone to update it. Enumeration does.
+    """
+    tested: set[str] = set()
+    for row in results:
+        if row.title.startswith("Not tested:"):
+            continue
+        for pillar, prefixes in _PILLAR_PREFIXES.items():
+            if row.probe_id.startswith(prefixes):
+                tested.add(pillar)
+
+    kind = str(getattr(target.kind, "value", target.kind))
+    has_repo = bool(target.code_repo_ref)
+    declares_runtime_protection = bool(target.runtime_protection)
+
+    #: Why a pillar did not run, said in terms of this target's configuration
+    #: rather than as a bare "no results".
+    reasons: dict[str, str] = {
+        "AI security": (
+            "No conversational adapter is configured, so the AI probes had no surface to test."
+            if not target.adapter_kind
+            else "The AI engine produced no results for this run."
+        ),
+        "API security": (
+            "No OpenAPI document is configured, so the API probes had no declared surface to test."
+        ),
+        "SAST": "No source repository is configured.",
+        "SCA": "No source repository is configured, so no dependency manifest was read.",
+        # `pragma` because detect-secrets' keyword heuristic reads the key
+        # "Secrets" followed by a string as a credential assignment. It is a
+        # pillar label. Marked inline rather than baselined, so the reason
+        # sits next to the line a reviewer will look at.
+        "Secrets": "No source repository is configured.",  # pragma: allowlist secret
+        "IaC": "No source repository is configured.",
+        "DAST": (
+            f"This target is registered as {kind!r}; the crawler and the DAST scanners "
+            "run only against a target registered as 'web_app'."
+        ),
+        "RASP": (
+            "No runtime-protection engine exists on this platform. "
+            + (
+                "This target declares runtime protection, and none of it was measured."
+                if declares_runtime_protection
+                else "This target declares no runtime protection."
+            )
+        ),
+    }
+    if has_repo:
+        for pillar in ("SAST", "SCA", "Secrets", "IaC"):
+            reasons[pillar] = (
+                f"A source repository is configured, but the {pillar} engine produced "
+                "no results — most often its tool was unavailable on the worker. See "
+                "the not-tested list."
+            )
+
+    return [
+        PillarCoverage(
+            pillar=pillar,
+            tested=pillar in tested,
+            detail=(
+                "Ran and reported against this target."
+                if pillar in tested
+                else reasons.get(pillar, "Did not run.")
+            ),
+        )
+        for pillar in PILLARS
+    ]
 
 
 def _judge_status(results: list[ScanResultRecord]) -> str:
@@ -247,6 +350,7 @@ async def build_report(db: AsyncSession, *, run: AssessmentRun, target: Target) 
         permission_graph=_permission_graph(results),
         findings=[_report_finding(finding) for finding in findings],
         not_tested=_not_tested_from(results),
+        pillar_coverage=_pillar_coverage(results, target),
         is_retest=run.kind is RunKind.RETEST,
         retests=retests,
         checks_completed=run.checks_completed,
@@ -356,6 +460,17 @@ def to_canonical_json(report: ReportData) -> str:
         },
         "coverage": {
             "reported_against": report.frameworks_covered(),
+            # Every pillar, named, whether or not it ran — so a consumer of
+            # the JSON can tell "DAST found nothing" from "DAST never ran"
+            # without parsing prose.
+            "pillar_coverage": [
+                {
+                    "pillar": item.pillar,
+                    "tested": item.tested,
+                    "detail": item.detail,
+                }
+                for item in report.pillar_coverage
+            ],
             "not_tested": [
                 {"area": item.area, "reason": item.reason, "probe_id": item.probe_id}
                 for item in report.not_tested

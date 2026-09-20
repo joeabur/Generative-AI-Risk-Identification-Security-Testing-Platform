@@ -80,6 +80,43 @@ class NotTested:
     probe_id: str
 
 
+#: Every assessment pillar this platform can run, in the order a report lists
+#: them. The §27 addendum requires the coverage section to name
+#: SAST/DAST/SCA/Secrets/IaC/RASP **explicitly whenever any of them were not
+#: run**, so the list is fixed and enumerated rather than assembled from
+#: whatever happened to produce output. A pillar that produced nothing is the
+#: case this exists for: silence is what reads as a clean result.
+PILLARS: tuple[str, ...] = (
+    "AI security",
+    "API security",
+    "SAST",
+    "DAST",
+    "SCA",
+    "Secrets",
+    "IaC",
+    "RASP",
+)
+
+
+@dataclass(frozen=True)
+class PillarCoverage:
+    """Whether one pillar ran, and what that means for this report.
+
+    `tested` is derived from whether results actually carry that pillar's
+    probe ids — not from what was configured, because configuring an engine
+    and that engine running are different things and only one of them puts
+    findings in a report.
+    """
+
+    pillar: str
+    tested: bool
+    detail: str
+
+    @property
+    def label(self) -> str:
+        return "tested" if self.tested else "not tested"
+
+
 @dataclass(frozen=True)
 class RetestRecord:
     """One finding's retest verdict, with the digests either side of it."""
@@ -133,6 +170,9 @@ class ReportData:
     # --- results --------------------------------------------------------
     findings: list[ReportFinding] = field(default_factory=list)
     not_tested: list[NotTested] = field(default_factory=list)
+    #: One entry per pillar in `PILLARS`, always. A report that omitted a
+    #: pillar would be a report whose silence reads as coverage.
+    pillar_coverage: list[PillarCoverage] = field(default_factory=list)
     # Present when this run was a retest. Empty on an ordinary assessment,
     # which is not the same as "everything was fixed" — the renderer says so.
     is_retest: bool = False

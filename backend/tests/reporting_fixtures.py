@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from app.core.measure.asr import DEFAULT_RULE
 from app.core.reporting.model import (
     NotTested,
+    PillarCoverage,
     ReportData,
     ReportFinding,
     RetestRecord,
@@ -160,6 +161,47 @@ def sample_report() -> ReportData:
                 area="dependency advisories",
                 reason="Advisory lookup is disabled by default (no outbound disclosure).",
                 probe_id="AEGIS-APPSEC-000",
+            ),
+        ],
+        # Every pillar, always. The fixture mixes tested and untested ones so a
+        # renderer that only emitted the untested (or only the tested) half
+        # would show up in the snapshots.
+        pillar_coverage=[
+            PillarCoverage(
+                pillar="AI security", tested=True, detail="Ran and reported against this target."
+            ),
+            PillarCoverage(
+                pillar="API security", tested=True, detail="Ran and reported against this target."
+            ),
+            PillarCoverage(
+                pillar="SAST", tested=True, detail="Ran and reported against this target."
+            ),
+            PillarCoverage(
+                pillar="DAST",
+                tested=False,
+                detail=(
+                    "This target is registered as 'llm_app'; the crawler and the DAST "
+                    "scanners run only against a target registered as 'web_app'."
+                ),
+            ),
+            PillarCoverage(
+                pillar="SCA",
+                tested=False,
+                detail="No source repository is configured, so no dependency manifest was read.",
+            ),
+            PillarCoverage(
+                pillar="Secrets", tested=False, detail="No source repository is configured."
+            ),
+            PillarCoverage(
+                pillar="IaC", tested=False, detail="No source repository is configured."
+            ),
+            PillarCoverage(
+                pillar="RASP",
+                tested=False,
+                detail=(
+                    "No runtime-protection engine exists on this platform. This target "
+                    "declares no runtime protection."
+                ),
             ),
         ],
         checks_completed=4,

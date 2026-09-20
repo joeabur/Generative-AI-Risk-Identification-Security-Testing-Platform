@@ -71,7 +71,7 @@ PyRIT, promptfoo, DeepTeam, Giskard. None of them combine a hard
 authorization/scope boundary, tamper-evident evidence, cross-tool finding
 normalization, and statistically honest (ASR + confidence interval)
 reporting into one assessment workflow. See `docs/BUILD_SPEC.md` §1.1 for
-the full comparison, and `docs/comparison.md` (once written) for where
+the full comparison, and [`docs/comparison.md`](docs/comparison.md) for where
 those tools are still better.
 
 ## Architecture

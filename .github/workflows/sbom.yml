@@ -51,6 +51,25 @@ jobs:
             --output-file sbom/frontend.cdx.json \
             frontend/package-lock.json
 
+      - name: Generate the ML-BOM
+        working-directory: backend
+        # A SEPARATE, labelled document — §27's addendum forbids merging the
+        # two into one undifferentiated bill of materials. It is also mostly
+        # empty on purpose: this release ships no model, and an inventory that
+        # says so is worth more than one padded to look complete.
+        run: python -m scripts.mlbom --out ../sbom/mlbom.cdx.json
+
+      - name: Show what each document claims
+        run: |
+          set -euo pipefail
+          for file in sbom/*.json; do
+            echo "== $file"
+            python -c "import json,sys; d=json.load(open(sys.argv[1])); \
+              print('  spec', d.get('specVersion'), \
+                    'components', len(d.get('components') or []), \
+                    'services', len(d.get('services') or []))" "$file"
+          done
+
       - uses: actions/upload-artifact@v4
         with:
           name: sbom

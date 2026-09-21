@@ -8,8 +8,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.auth.security import InvalidTokenError, decode_access_token
+from app.auth.security import (
+    InvalidTokenError,
+    decode_access_token,
+    expires_at,
+    issued_at_precise,
+    token_id,
+)
 from app.core.config import get_settings
+from app.core.revocation import dependency as revocation
+from app.core.revocation.contract import RevocationStoreUnavailable
 from app.db.session import get_db
 from app.models.api_key import ApiKey, split_token
 from app.models.organization import Membership, Role
@@ -86,9 +94,39 @@ async def get_current_user(request: Request, db: DbSession) -> User:
     except (KeyError, ValueError) as exc:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject") from exc
 
+    # Revocation is checked here, before the database round trip below, for
+    # the same reason budget is consumed before the login lookup: a request
+    # for a killed token should not do any more work than necessary to refuse
+    # it. This fails CLOSED on a store failure — the exact opposite of the
+    # rate limiter's choice a few lines of reasoning away in
+    # app/core/ratelimit/, and `app/core/revocation/contract.py` explains why
+    # the two controls make opposite trades.
+    jti = token_id(payload)
+    try:
+        revoked = await revocation.is_revoked(jti)
+    except RevocationStoreUnavailable as exc:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            detail="Could not verify this token has not been revoked. Try again.",
+        ) from exc
+    if revoked:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Token has been revoked")
+
     user = await db.get(User, user_id)
     if user is None or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
+
+    # A "log out everywhere" bulk cutover, checked against Postgres — durable
+    # across a Redis restart precisely because the per-token deny-list is not.
+    if user.tokens_valid_after is not None and issued_at_precise(payload) < user.tokens_valid_after:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Token has been revoked")
+
+    # The handler for logout needs the jti and expiry of *this* token to
+    # revoke it precisely, and has no other way to reach them — the request
+    # only carries the encoded string. Stashed on request.state, the same
+    # pattern `resolve_api_key` above uses for the API key it resolved.
+    request.state.token_jti = jti
+    request.state.token_exp = expires_at(payload)
     return user
 
 

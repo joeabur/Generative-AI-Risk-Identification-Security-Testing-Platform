@@ -68,6 +68,13 @@ Authentication endpoints are rate limited — two dimensions, throttled never
 locked out, and unable to tell a caller whether an account exists. See
 [`docs/rate-limiting.md`](docs/rate-limiting.md).
 
+A session can be killed server-side, not just its client cookie: `/auth/logout`
+revokes one token, `/auth/logout-all` revokes every token a user has ever been
+issued as an immediate response to a suspected leak. This is the one
+Redis-backed control on the platform that fails *closed*, deliberately the
+opposite of the rate limiter next to it. See
+[`docs/revocation.md`](docs/revocation.md).
+
 All eighteen phases are built. [`docs/roadmap.md`](docs/roadmap.md) records
 exactly what's built versus deferred, and why, phase by phase;
 [`docs/limitations.md`](docs/limitations.md) says what the tool cannot detect

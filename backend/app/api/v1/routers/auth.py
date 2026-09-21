@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from sqlalchemy import select
 
@@ -8,6 +10,7 @@ from app.core.config import get_settings
 from app.core.csrf import enforce as csrf_enforce
 from app.core.csrf import tokens as csrf_tokens
 from app.core.ratelimit import dependency as ratelimit
+from app.core.revocation import dependency as revocation
 from app.models.user import User
 from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, UserRead
 
@@ -149,10 +152,50 @@ async def login(
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-async def logout(response: Response, current_user: CurrentUser, db: DbSession) -> None:
+async def logout(
+    request: Request, response: Response, current_user: CurrentUser, db: DbSession
+) -> None:
+    """End *this* session. Other tokens for this user, if any exist, keep
+    working — see `/auth/logout-all` for "kick everything"."""
+    # Set only when authentication went through the JWT path — an API key has
+    # its own revocation (`ApiKey.revoked_at`) and never reaches this store.
+    jti = getattr(request.state, "token_jti", None)
+    if jti is not None:
+        exp: datetime = request.state.token_exp
+        ttl = int((exp - datetime.now(UTC)).total_seconds())
+        await revocation.revoke(jti, ttl)
+
     await record_event(
         db,
         action="auth.logout",
+        resource_type="user",
+        resource_id=str(current_user.id),
+        result="allow",
+        user_id=current_user.id,
+    )
+    await db.commit()
+    settings = get_settings()
+    response.delete_cookie(settings.session_cookie_name, path="/")
+    response.delete_cookie(csrf_enforce.COOKIE_NAME, path="/")
+
+
+@router.post("/logout-all", status_code=status.HTTP_204_NO_CONTENT)
+async def logout_all(response: Response, current_user: CurrentUser, db: DbSession) -> None:
+    """Kill every token this user has ever been issued, this one included.
+
+    The response to "I think my token leaked" or "I logged in on a shared
+    machine and forgot to log out". A bulk cutover on the user row rather than
+    finding and revoking each outstanding token individually — this platform
+    does not track which tokens exist, only which are dead, and a per-user
+    cutoff needs neither.
+    """
+    # Compared against a token's precise `iat_us` claim
+    # (app/auth/security.py), not the standard second-granularity `iat` — see
+    # that module for why the distinction matters here specifically.
+    current_user.tokens_valid_after = datetime.now(UTC)
+    await record_event(
+        db,
+        action="auth.logout_all",
         resource_type="user",
         resource_id=str(current_user.id),
         result="allow",

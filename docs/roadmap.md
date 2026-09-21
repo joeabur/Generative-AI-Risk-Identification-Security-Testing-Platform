@@ -2070,3 +2070,77 @@ seventh, and it is recorded as unproven rather than quietly counted.
 - **No dashboard write actions.** The machinery a form needs is in place
   (`csrf_token` form field accepted), but no handler uses it yet. That is the
   natural next piece of work.
+
+## Post-Phase-18: server-side JWT revocation
+
+The next item in the security review's residual list. §18 asks for real
+session/token management; a JWT with no server-side kill mechanism does not
+have that — "logout" only cleared a cookie, and a leaked token stayed valid
+for its full 12-hour default lifetime regardless of anything a user or
+operator did about it. `docs/revocation.md` is the reference.
+
+### Two mechanisms, chosen for what each is actually for
+
+Per-token revocation (`/auth/logout`, a Redis deny-list keyed by `jti`,
+self-expiring with the token's own remaining lifetime) scopes correctly to
+one session — proven by logging in twice and killing only the first token.
+Per-user revocation (`/auth/logout-all`, a Postgres cutoff timestamp) is the
+compromise-response case: it kills every token ever issued to a user,
+including ones it never tracked and never learned the `jti` of, by comparing
+issuance time to a cutoff rather than enumerating anything.
+
+The split between Redis and Postgres is deliberate and asymmetric. Losing a
+single logout to a Redis restart is a bounded, tolerable regression — the
+token becomes valid again for at most its own remaining life. Losing a "log
+out everywhere" cutover the same way would silently undo a compromise
+response, which is the one case that mechanism exists for, so it lives in
+Postgres instead.
+
+### The one control here that fails closed, and why that is a deliberate
+### contrast with everything else Redis-backed on this platform
+
+The rate limiter and the run kill switch both fail *open* on an unreachable
+store — each sits on top of a decision something else still makes correctly
+(Argon2id, the scope engine's budget checks), so a Redis blip must not widen
+into a bigger outage than the risk being mitigated. Revocation is not that
+shape: it **is** the authorization decision for a token that was deliberately
+killed, and "could not check, so let it through" is exactly the failure a
+revoked-but-still-working token represents. An unreachable revocation store
+therefore refuses every JWT-authenticated request — the wider blast radius is
+accepted on purpose. A single test file asserts both halves side by side
+(`test_the_two_controls_disagree_on_purpose`), so a future refactor cannot
+quietly make them agree.
+
+### A timestamp bug caught by writing the test that should have been easy
+
+The per-user cutoff needs to compare a token's issuance time against a
+Postgres timestamp. The obvious approach — the JWT's own `iat` claim — is
+ambiguous whenever both events land in the same wall-clock second, because
+RFC 7519 mandates `iat` as an integer-second `NumericDate` and PyJWT truncates
+a `datetime` claim to that on encode. The natural first fix (floor the
+Postgres cutoff to match) just moves the race to the opposite failure: a token
+issued a moment before the cutoff, in the same second, can then survive it.
+
+This was not found by inspection — it was found by writing
+`test_a_token_issued_after_logout_all_still_works` (log out everywhere, then
+immediately log back in, then use the new token) and watching it fail
+intermittently depending on exactly when in the second the test happened to
+run. The fix is a second, dedicated claim (`iat_us`, whole microseconds since
+the epoch) carried alongside the standard `iat` purely for this comparison,
+required on every token the same way `jti` is: a token forged without it is
+refused outright, not silently exempted from the check it cannot satisfy.
+
+Three controls verified by breaking them: fail-open instead of fail-closed on
+a degraded store, accepting a token forged without a `jti`, and revoking by
+user id instead of by `jti` (which broke logout entirely rather than merely
+widening its scope, since the lookup path only ever checks by `jti` — a
+useful confirmation that the per-token key is truly load-bearing).
+
+### Deferrals
+
+- **No visibility into active sessions**, and no way to revoke one specific
+  *other* session by name — only "this one" or "all of them" is expressible,
+  because this platform does not enumerate issued tokens.
+- **No password-change flow exists yet** to hang an automatic "revoke
+  everything on password change" rule from. `/auth/logout-all` is the
+  deliberate stand-in.

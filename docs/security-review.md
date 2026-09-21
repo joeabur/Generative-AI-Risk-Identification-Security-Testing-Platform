@@ -156,7 +156,7 @@ Stated plainly, because a review that lists only strengths is marketing.
 | Gap | Consequence |
 |---|---|
 | Rate limiting fails open when Redis is unavailable | Guessing is then bounded only by Argon2's cost; logged at error level, alert on it |
-| No server-side JWT revocation | A stolen session token is valid until it expires |
+| No visibility into active sessions, and no per-session revocation by name | Only "this session" (`/auth/logout`) or "every session" (`/auth/logout-all`) is expressible |
 | No encryption at rest for evidence | A host compromise yields redacted evidence bundles |
 | Login CSRF is unprotected | `/auth/login` and `/auth/register` are exempt; an attacker can sign a victim into the attacker's account |
 | No signature verification for plugins | The allowlist and an optional hash are the controls |
@@ -444,3 +444,34 @@ platform has no CSRF token", which became false the moment this shipped. A
 stale reason on a disabled control is a false statement in the product, so it
 was replaced: the dashboard is read-only because no write handlers are built,
 which is a scope decision rather than a security constraint.
+
+## Server-side JWT revocation (§18)
+
+The gap this row used to describe is closed: a JWT is no longer valid for its
+full 12-hour default lifetime regardless of what happens to it.
+`docs/revocation.md` is the reference; two points bear on a deployment
+decision.
+
+**This is the one Redis-backed control on this platform that fails closed.**
+The rate limiter and the run kill switch both fail open on an unreachable
+store, deliberately — each sits on top of a decision something else still
+makes correctly. Revocation *is* the decision for a token that was
+deliberately killed, so "could not check" must mean "refused", not "allowed
+through". An unreachable revocation store therefore refuses every
+JWT-authenticated request, a wider blast radius than the rate limiter accepts
+and the correct trade for what this control is for. Both halves — the rate
+limiter's fail-open and this control's fail-closed — are asserted in the same
+test file so a future refactor cannot let them silently converge.
+
+**A subtle timestamp bug was caught before it shipped.** The per-user "log out
+everywhere" cutoff compares against a token's issuance time, and the obvious
+implementation — using the JWT's standard `iat` claim — is ambiguous within
+whichever wall-clock second the cutover happens to land in, because RFC 7519
+truncates `iat` to whole seconds. Rounding either side to match the other only
+moves the race: a fresh login immediately after "log out everywhere" could
+read as revoked, or a token that should have died could survive. It was found
+by writing exactly that scenario as a test and watching it fail intermittently
+during development. The fix is a dedicated microsecond-precision claim used
+only for this comparison, required the same way `jti` is — a token forged
+without it is refused, not silently exempted from revocation.
+

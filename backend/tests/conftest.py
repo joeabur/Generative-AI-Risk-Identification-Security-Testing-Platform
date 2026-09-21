@@ -31,6 +31,10 @@ from app.api.v1.routers.targets import get_dns_resolver  # noqa: E402
 from app.core.config import get_settings  # noqa: E402
 from app.core.ratelimit.dependency import reset_store_for_tests  # noqa: E402
 from app.core.ratelimit.stores import MemoryStore  # noqa: E402
+from app.core.revocation.dependency import (  # noqa: E402
+    reset_store_for_tests as reset_revocation_store_for_tests,
+)
+from app.core.revocation.stores import MemoryStore as RevocationMemoryStore  # noqa: E402
 from app.db.session import get_db  # noqa: E402
 from app.main import create_app  # noqa: E402
 from tests.security.conftest import FakeDnsResolver  # noqa: E402
@@ -112,6 +116,20 @@ def _fresh_rate_limit_store() -> Generator[MemoryStore, None, None]:
     reset_store_for_tests(store)
     yield store
     reset_store_for_tests(None)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_revocation_store() -> Generator[RevocationMemoryStore, None, None]:
+    """A private, empty revocation deny-list per test.
+
+    Same reason as the rate-limit store: the suite would otherwise talk to a
+    real Redis, and worse, a jti revoked by one test would carry into the
+    next one's assertions about a token that test never touched.
+    """
+    store = RevocationMemoryStore()
+    reset_revocation_store_for_tests(store)
+    yield store
+    reset_revocation_store_for_tests(None)
 
 
 @pytest_asyncio.fixture

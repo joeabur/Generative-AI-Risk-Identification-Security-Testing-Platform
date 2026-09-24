@@ -6,6 +6,9 @@ import pytest
 from httpx import AsyncClient
 
 from app.core.appsec.workspace import CodeScopeError
+from app.core.config import get_settings
+from app.core.csrf import anon as csrf_anon
+from app.core.csrf.enforce import HEADER_NAME
 from app.core.orchestrator.context_builder import build_workspace
 
 ROE = {
@@ -37,6 +40,9 @@ CODE = {
 
 
 async def _target(client: AsyncClient, password: str, suffix: str, *, with_roe: bool = True):
+    _owner_anon_token = (await client.get("/api/v1/auth/csrf")).cookies[
+        csrf_anon.cookie_name(secure=get_settings().session_cookie_secure)
+    ]
     owner = await client.post(
         "/api/v1/auth/register",
         json={
@@ -44,6 +50,7 @@ async def _target(client: AsyncClient, password: str, suffix: str, *, with_roe: 
             "full_name": "Code Owner",
             "password": password,
         },
+        headers={HEADER_NAME: _owner_anon_token},
     )
     header = f"Bearer {owner.json()['access_token']}"
     headers = {"Authorization": header}
@@ -123,6 +130,9 @@ async def test_only_admins_may_point_an_assessment_at_a_repository(
     client: AsyncClient, strong_password: str
 ) -> None:
     org_id, target_id, owner_headers = await _target(client, strong_password, "d")
+    _engineer_anon_token = (await client.get("/api/v1/auth/csrf")).cookies[
+        csrf_anon.cookie_name(secure=get_settings().session_cookie_secure)
+    ]
     engineer = await client.post(
         "/api/v1/auth/register",
         json={
@@ -130,6 +140,7 @@ async def test_only_admins_may_point_an_assessment_at_a_repository(
             "full_name": "Engineer",
             "password": strong_password,
         },
+        headers={HEADER_NAME: _engineer_anon_token},
     )
     await client.post(
         f"/api/v1/organizations/{org_id}/members",

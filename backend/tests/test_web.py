@@ -27,6 +27,9 @@ from fastapi.routing import APIRoute
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
+from app.core.csrf import anon as csrf_anon
+from app.core.csrf.enforce import HEADER_NAME
 from app.core.probes.models import Category, Confidence, Severity
 from app.models.authorization import Authorization
 from app.models.finding import Finding, FindingStatus, Stability
@@ -130,6 +133,9 @@ async def _setup(client: AsyncClient, password: str, suffix: str) -> tuple[str, 
     The cookie is what the dashboard actually authenticates with, so it is what
     the tests use — a Bearer header would test a path a browser never takes.
     """
+    _registered_anon_token = (await client.get("/api/v1/auth/csrf")).cookies[
+        csrf_anon.cookie_name(secure=get_settings().session_cookie_secure)
+    ]
     registered = await client.post(
         "/api/v1/auth/register",
         json={
@@ -137,6 +143,7 @@ async def _setup(client: AsyncClient, password: str, suffix: str) -> tuple[str, 
             "full_name": "Dash Owner",
             "password": password,
         },
+        headers={HEADER_NAME: _registered_anon_token},
     )
     assert registered.status_code == 201, registered.text
     cookie = registered.cookies.get("aegis_session")

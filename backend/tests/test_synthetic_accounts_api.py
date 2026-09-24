@@ -6,6 +6,10 @@ credential and never the credential.
 
 from httpx import AsyncClient
 
+from app.core.config import get_settings
+from app.core.csrf import anon as csrf_anon
+from app.core.csrf.enforce import HEADER_NAME
+
 ACCOUNT = {
     "label": "account_a",
     "credential_env_var": "AEGIS_TARGET_TOKEN_A",
@@ -14,6 +18,9 @@ ACCOUNT = {
 
 
 async def _org_with_target(client: AsyncClient, password: str, suffix: str) -> tuple[str, str, str]:
+    _owner_anon_token = (await client.get("/api/v1/auth/csrf")).cookies[
+        csrf_anon.cookie_name(secure=get_settings().session_cookie_secure)
+    ]
     owner = await client.post(
         "/api/v1/auth/register",
         json={
@@ -21,6 +28,7 @@ async def _org_with_target(client: AsyncClient, password: str, suffix: str) -> t
             "full_name": "Acct Owner",
             "password": password,
         },
+        headers={HEADER_NAME: _owner_anon_token},
     )
     header = f"Bearer {owner.json()['access_token']}"
     org_id = (
@@ -110,6 +118,9 @@ async def test_only_admins_may_declare_a_test_account(
     """Declaring a test account asserts entitlement to use it, so it sits at
     the same privilege level as granting authorization."""
     org_id, target_id, owner_header = await _org_with_target(client, strong_password, "d")
+    _engineer_anon_token = (await client.get("/api/v1/auth/csrf")).cookies[
+        csrf_anon.cookie_name(secure=get_settings().session_cookie_secure)
+    ]
     engineer = await client.post(
         "/api/v1/auth/register",
         json={
@@ -117,6 +128,7 @@ async def test_only_admins_may_declare_a_test_account(
             "full_name": "Engineer",
             "password": strong_password,
         },
+        headers={HEADER_NAME: _engineer_anon_token},
     )
     await client.post(
         f"/api/v1/organizations/{org_id}/members",

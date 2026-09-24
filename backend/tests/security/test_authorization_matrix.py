@@ -39,6 +39,9 @@ from app.api.v1.routers import (
     vcs,
     workflows,
 )
+from app.core.config import get_settings
+from app.core.csrf import anon as csrf_anon
+from app.core.csrf.enforce import HEADER_NAME
 from app.models.organization import Role
 
 PREFIX = "/api/v1"
@@ -119,9 +122,12 @@ def _url(path: str, organization_id: str) -> str:
 
 
 async def _register(client: AsyncClient, email: str, password: str) -> dict[str, str]:
+    anon = await client.get("/api/v1/auth/csrf")
+    anon_token = anon.cookies[csrf_anon.cookie_name(secure=get_settings().session_cookie_secure)]
     response = await client.post(
         "/api/v1/auth/register",
         json={"email": email, "full_name": email.split("@")[0], "password": password},
+        headers={HEADER_NAME: anon_token},
     )
     assert response.status_code == 201, response.text
     return {"Authorization": f"Bearer {response.json()['access_token']}"}

@@ -31,10 +31,18 @@ from sqlalchemy import select
 
 from app.auth.security import create_access_token, decode_access_token
 from app.core.config import get_settings
+from app.core.csrf import anon as csrf_anon
+from app.core.csrf.enforce import HEADER_NAME
 from app.core.revocation.contract import RevocationStoreUnavailable
 from app.core.revocation.dependency import get_store, reset_store_for_tests
 from app.core.revocation.stores import MemoryStore
 from app.models.user import User
+
+
+async def _anon_headers(client: AsyncClient) -> dict[str, str]:
+    anon = await client.get("/api/v1/auth/csrf")
+    token = anon.cookies[csrf_anon.cookie_name(secure=get_settings().session_cookie_secure)]
+    return {HEADER_NAME: token}
 
 
 class _BrokenStore:
@@ -128,7 +136,11 @@ async def test_revoking_with_a_non_positive_ttl_is_a_no_op_not_a_crash() -> None
 
 
 async def _login(client: AsyncClient, email: str, password: str) -> dict[str, str]:
-    response = await client.post("/api/v1/auth/login", json={"email": email, "password": password})
+    response = await client.post(
+        "/api/v1/auth/login",
+        json={"email": email, "password": password},
+        headers=await _anon_headers(client),
+    )
     assert response.status_code == 200, response.text
     return {
         "bearer": response.json()["access_token"],
@@ -140,6 +152,7 @@ async def test_a_token_works_until_logged_out(client: AsyncClient, strong_passwo
     await client.post(
         "/api/v1/auth/register",
         json={"email": "revoke-basic@example.test", "full_name": "R", "password": strong_password},
+        headers=await _anon_headers(client),
     )
     creds = await _login(client, "revoke-basic@example.test", strong_password)
     headers = {"Authorization": f"Bearer {creds['bearer']}"}
@@ -171,6 +184,7 @@ async def test_logging_out_one_session_does_not_touch_another(
             "full_name": "R",
             "password": strong_password,
         },
+        headers=await _anon_headers(client),
     )
     first = await _login(client, "revoke-scoped@example.test", strong_password)
     second = await _login(client, "revoke-scoped@example.test", strong_password)
@@ -209,6 +223,7 @@ async def test_logout_all_kills_every_session_including_ones_it_never_saw(
             "full_name": "R",
             "password": strong_password,
         },
+        headers=await _anon_headers(client),
     )
     first = await _login(client, "revoke-all@example.test", strong_password)
     second = await _login(client, "revoke-all@example.test", strong_password)
@@ -237,6 +252,7 @@ async def test_a_token_issued_after_logout_all_still_works(
             "full_name": "R",
             "password": strong_password,
         },
+        headers=await _anon_headers(client),
     )
     old = await _login(client, "revoke-relogin@example.test", strong_password)
     await client.post(
@@ -267,6 +283,7 @@ async def test_logout_all_is_durable_in_postgres_not_only_redis(
             "full_name": "R",
             "password": strong_password,
         },
+        headers=await _anon_headers(client),
     )
     creds = await _login(client, "revoke-durable@example.test", strong_password)
     await client.post(
@@ -311,6 +328,7 @@ async def test_an_unreachable_revocation_store_refuses_the_request(
             "full_name": "R",
             "password": strong_password,
         },
+        headers=await _anon_headers(client),
     )
     creds = await _login(client, "revoke-degraded@example.test", strong_password)
 
@@ -360,6 +378,7 @@ async def test_the_two_controls_disagree_on_purpose(
                 "full_name": "R",
                 "password": strong_password,
             },
+            headers=await _anon_headers(client),
         )
         assert response.status_code == 201
     finally:

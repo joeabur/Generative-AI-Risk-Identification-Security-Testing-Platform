@@ -14,6 +14,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.core.csrf import anon as csrf_anon
+from app.core.csrf.enforce import HEADER_NAME
 from app.models.audit import AuditEvent
 from app.models.vcs import PullRequestPost, VcsConnection
 
@@ -30,6 +32,9 @@ def _token_env(monkeypatch: pytest.MonkeyPatch):
 
 
 async def _owner(client: AsyncClient, password: str, suffix: str) -> tuple[str, dict[str, str]]:
+    _registered_anon_token = (await client.get("/api/v1/auth/csrf")).cookies[
+        csrf_anon.cookie_name(secure=get_settings().session_cookie_secure)
+    ]
     registered = await client.post(
         "/api/v1/auth/register",
         json={
@@ -37,6 +42,7 @@ async def _owner(client: AsyncClient, password: str, suffix: str) -> tuple[str, 
             "full_name": "VCS Owner",
             "password": password,
         },
+        headers={HEADER_NAME: _registered_anon_token},
     )
     headers = {"Authorization": f"Bearer {registered.json()['access_token']}"}
     org_id = (
@@ -180,6 +186,9 @@ async def test_an_analyst_can_read_but_not_create(
     client: AsyncClient, strong_password: str
 ) -> None:
     org_id, owner_headers = await _owner(client, strong_password, "f")
+    _analyst_anon_token = (await client.get("/api/v1/auth/csrf")).cookies[
+        csrf_anon.cookie_name(secure=get_settings().session_cookie_secure)
+    ]
     analyst = await client.post(
         "/api/v1/auth/register",
         json={
@@ -187,6 +196,7 @@ async def test_an_analyst_can_read_but_not_create(
             "full_name": "Analyst",
             "password": strong_password,
         },
+        headers={HEADER_NAME: _analyst_anon_token},
     )
     analyst_headers = {"Authorization": f"Bearer {analyst.json()['access_token']}"}
     await client.post(

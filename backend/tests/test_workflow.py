@@ -14,6 +14,9 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
+from app.core.csrf import anon as csrf_anon
+from app.core.csrf.enforce import HEADER_NAME
 from app.core.gate.model import GateConfig
 from app.core.probes.models import Category, Confidence, Severity
 from app.core.workflow.contract import (
@@ -233,6 +236,9 @@ def test_the_result_module_does_not_import_the_assistant() -> None:
 
 
 async def _org_and_target(client, password: str, suffix: str) -> tuple[str, str, dict[str, str]]:
+    _registered_anon_token = (await client.get("/api/v1/auth/csrf")).cookies[
+        csrf_anon.cookie_name(secure=get_settings().session_cookie_secure)
+    ]
     registered = await client.post(
         "/api/v1/auth/register",
         json={
@@ -240,6 +246,7 @@ async def _org_and_target(client, password: str, suffix: str) -> tuple[str, str,
             "full_name": "WF Owner",
             "password": password,
         },
+        headers={HEADER_NAME: _registered_anon_token},
     )
     headers = {"Authorization": f"Bearer {registered.json()['access_token']}"}
     org_id = (

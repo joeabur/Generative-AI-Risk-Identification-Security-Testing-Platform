@@ -97,12 +97,6 @@ not exempt — rather than by a list that has to be maintained.
 
 Stated rather than implied:
 
-- **Login CSRF is open.** `/auth/login` and `/auth/register` are exempt
-  because no session exists to bind a token to. An attacker can therefore
-  forge a request that signs a victim into the *attacker's* account, so the
-  victim's subsequent actions are recorded against it. Closing it needs a
-  pre-session token issued to anonymous visitors. Accepted deliberately and
-  recorded here, not overlooked.
 - **The constant-time comparison is not covered by a test.** Replacing
   `hmac.compare_digest` with `==` leaves the whole suite green, because a
   timing property is not observable from a functional assertion. The code is
@@ -138,3 +132,31 @@ real `clientApiFetch` (not a mock) against a stubbed `fetch` and a seeded
 a cookie present, omitted for safe methods and for the pre-session case, and
 never overridden when a caller already supplies one. Verified to fail
 (header missing) with the fix reverted and pass with it restored.
+
+## Login CSRF is closed: a pre-session token
+
+"Login CSRF is open" above used to be permanent, not merely current — closing
+it needs a token issued before any session exists, and a merely self-signed
+one does not actually solve the problem (see the analysis in
+`app/core/csrf/anon.py` for why). That module, plus a new
+`GET /api/v1/auth/csrf` endpoint, is the fix: `/auth/login` and
+`/auth/register` moved out of `EXEMPT_PATHS` into `ANONYMOUS_CSRF_PATHS` and
+now require the same header the session-bound flow does, verified against a
+cookie that is itself both self-signed and, where the deployment serves
+HTTPS, `__Host-`-prefixed — the part that actually stops a sibling subdomain
+from planting one (browsers refuse a `__Host-` `Set-Cookie` without `Secure`,
+no `Domain`, and `Path=/`, which host-locks it to the exact origin that set
+it).
+
+**The cost, named rather than hidden:** `__Host-` requires HTTPS. A
+deployment running over plain HTTP — local dev, by default — gets an
+unprefixed cookie of the same shape instead, which still blocks the naive
+double-submit break (signing) but not the sibling-subdomain one. Set
+`AEGIS_SESSION_COOKIE_SECURE=true` for the full guarantee, which any
+deployment reachable over the public internet should be doing already.
+
+Both the frontend (`clientApiFetch` in `lib/api-client.ts`, via a new
+`ensureAnonCsrfToken` that calls the endpoint lazily) and the CLI
+(`ApiClient.fetch_anon_csrf_token` in `aegis_cli/client.py`, called from
+`cmd_login`) go through this same front door now — closing the enforcement
+gap without it meant either would 403 on their next login.

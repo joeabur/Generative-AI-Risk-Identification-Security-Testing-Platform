@@ -15,6 +15,9 @@ from app.api.v1.routers.assistant import get_ai_service
 from app.core.assistant.autonomy import AutonomyMode
 from app.core.assistant.fake import FakeProvider
 from app.core.assistant.service import AIService
+from app.core.config import get_settings
+from app.core.csrf import anon as csrf_anon
+from app.core.csrf.enforce import HEADER_NAME
 from app.workers.tasks import execute_assessment_run
 from tests.lab.ai_handlers import vulnerable_chat
 from tests.security.conftest import FakeDnsResolver
@@ -60,6 +63,9 @@ def _worker_transport():
 async def _run_with_findings(
     client: AsyncClient, password: str, suffix: str
 ) -> tuple[str, str, str, dict[str, str]]:
+    _owner_anon_token = (await client.get("/api/v1/auth/csrf")).cookies[
+        csrf_anon.cookie_name(secure=get_settings().session_cookie_secure)
+    ]
     owner = await client.post(
         "/api/v1/auth/register",
         json={
@@ -67,6 +73,7 @@ async def _run_with_findings(
             "full_name": "AI Owner",
             "password": password,
         },
+        headers={HEADER_NAME: _owner_anon_token},
     )
     headers = {"Authorization": f"Bearer {owner.json()['access_token']}"}
     org_id = (
@@ -230,6 +237,9 @@ async def test_accepting_requires_more_privilege_than_requesting(
     org_id, run_id, result_id, owner_headers = await _run_with_findings(
         client, strong_password, "e"
     )
+    _analyst_anon_token = (await client.get("/api/v1/auth/csrf")).cookies[
+        csrf_anon.cookie_name(secure=get_settings().session_cookie_secure)
+    ]
     analyst = await client.post(
         "/api/v1/auth/register",
         json={
@@ -237,6 +247,7 @@ async def test_accepting_requires_more_privilege_than_requesting(
             "full_name": "Analyst",
             "password": strong_password,
         },
+        headers={HEADER_NAME: _analyst_anon_token},
     )
     await client.post(
         f"/api/v1/organizations/{org_id}/members",
@@ -303,6 +314,9 @@ async def test_drafts_are_not_visible_across_organizations(
         json={"field": "remediation", "scan_result_id": result_id},
         headers=headers,
     )
+    _outsider_anon_token = (await client.get("/api/v1/auth/csrf")).cookies[
+        csrf_anon.cookie_name(secure=get_settings().session_cookie_secure)
+    ]
     outsider = await client.post(
         "/api/v1/auth/register",
         json={
@@ -310,6 +324,7 @@ async def test_drafts_are_not_visible_across_organizations(
             "full_name": "Outsider",
             "password": strong_password,
         },
+        headers={HEADER_NAME: _outsider_anon_token},
     )
 
     response = await client.get(

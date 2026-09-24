@@ -7,6 +7,7 @@ from app.audit.service import record_event
 from app.auth.dependencies import CurrentUser, DbSession
 from app.auth.security import create_access_token, hash_password, verify_password
 from app.core.config import get_settings
+from app.core.csrf import anon as csrf_anon
 from app.core.csrf import enforce as csrf_enforce
 from app.core.csrf import tokens as csrf_tokens
 from app.core.ratelimit import dependency as ratelimit
@@ -43,6 +44,27 @@ def _set_session_cookie(response: Response, token: str) -> None:
         secure=settings.session_cookie_secure,
         samesite="lax",
         max_age=settings.access_token_expire_minutes * 60,
+        path="/",
+    )
+
+
+@router.get("/csrf", status_code=status.HTTP_204_NO_CONTENT)
+async def issue_anonymous_csrf_token(response: Response) -> None:
+    """Hand an unauthenticated caller a token for `/auth/login` or `/auth/register`.
+
+    There is no session yet for either of those to bind a token to
+    (`app/core/csrf/anon.py` explains why a merely self-signed one is not
+    enough on its own); this is the endpoint a login or registration page
+    calls first to get one. `GET`, so it needs none itself.
+    """
+    settings = get_settings()
+    response.set_cookie(
+        key=csrf_anon.cookie_name(secure=settings.session_cookie_secure),
+        value=csrf_anon.issue(secret=settings.effective_csrf_secret),
+        httponly=False,  # the page must read this to echo it back
+        secure=settings.session_cookie_secure,
+        samesite="lax",
+        max_age=600,
         path="/",
     )
 

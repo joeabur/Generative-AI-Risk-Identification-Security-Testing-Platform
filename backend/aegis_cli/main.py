@@ -95,11 +95,14 @@ def _read_yaml(path: str) -> dict[str, Any]:
 def cmd_login(args: argparse.Namespace, profile: Profile) -> ExitCode:
     password = args.password or getpass.getpass("password: ")
     client = ApiClient(args.base_url or profile.base_url, None)
+    cookie_name, anon_token = client.fetch_anon_csrf_token()
     payload = client.request(
         "POST",
         "/auth/login",
         json_body={"email": args.email, "password": password},
         authenticated=False,
+        extra_headers={"X-CSRF-Token": anon_token},
+        extra_cookies={cookie_name: anon_token},
     )
     token = payload.get("access_token")
     if not token:

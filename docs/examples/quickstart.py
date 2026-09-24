@@ -28,6 +28,10 @@ step = lambda n, r: print(f"{n:<34} {r.status_code}") or (r.raise_for_status() o
 # against the same database rather than failing the second time with a 409.
 SUFFIX = uuid.uuid4().hex[:8]
 
+csrf = c.get("/auth/csrf")
+anon_token = next(
+    v for k, v in csrf.cookies.items() if k in ("__Host-aegis_csrf_anon", "aegis_csrf_anon")
+)
 r = c.post(
     "/auth/register",
     json={
@@ -35,6 +39,7 @@ r = c.post(
         "full_name": "You",
         "password": "Correct-Horse-Battery-Staple-9",
     },
+    headers={"X-CSRF-Token": anon_token},
 )
 step("1 register", r)
 h = {"Authorization": f"Bearer {r.json()['access_token']}"}

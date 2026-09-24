@@ -9,6 +9,9 @@ import pytest
 import respx
 from httpx import AsyncClient
 
+from app.core.config import get_settings
+from app.core.csrf import anon as csrf_anon
+from app.core.csrf.enforce import HEADER_NAME
 from app.core.scope.engine import ScopeEngine
 from app.core.scope.transport import GatedTransport
 from app.workers.tasks import execute_assessment_run
@@ -38,9 +41,13 @@ def _worker_transport() -> GatedTransport:
 async def _setup(
     client: AsyncClient, password: str, *, with_adapter: bool
 ) -> tuple[str, str, dict]:
+    _register_anon_token = (await client.get("/api/v1/auth/csrf")).cookies[
+        csrf_anon.cookie_name(secure=get_settings().session_cookie_secure)
+    ]
     register = await client.post(
         "/api/v1/auth/register",
         json={"email": "aiowner@example.test", "full_name": "AI Owner", "password": password},
+        headers={HEADER_NAME: _register_anon_token},
     )
     headers = {"Authorization": f"Bearer {register.json()['access_token']}"}
     org_id = (

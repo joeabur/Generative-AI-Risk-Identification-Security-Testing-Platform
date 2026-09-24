@@ -100,11 +100,18 @@ Every call below was executed against the running stack. The full script is
 `docs/examples/quickstart.py`.
 
 ```bash
-# 1. Register, and keep the token
-TOKEN=$(curl -s localhost:8000/api/v1/auth/register \
+# 1. Register, and keep the token. Login and register need a pre-session
+# CSRF token first (docs/csrf.md) — a cookie jar file carries it from the
+# GET to the POST the way a browser's cookie jar would.
+JAR=$(mktemp)
+curl -s -c "$JAR" localhost:8000/api/v1/auth/csrf -o /dev/null
+CSRF=$(awk -F'\t' '$6 ~ /aegis_csrf_anon$/ {print $7}' "$JAR")
+TOKEN=$(curl -s -b "$JAR" localhost:8000/api/v1/auth/register \
   -H 'content-type: application/json' \
+  -H "x-csrf-token: $CSRF" \
   -d '{"email":"you@example.test","full_name":"You","password":"Correct-Horse-Battery-Staple-9"}' \
   | python3 -c 'import json,sys;print(json.load(sys.stdin)["access_token"])')
+rm -f "$JAR"
 AUTH="authorization: Bearer $TOKEN"
 
 # 2. An organization

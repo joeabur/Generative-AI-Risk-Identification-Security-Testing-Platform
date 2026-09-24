@@ -1,6 +1,13 @@
 "use client";
 
-import { CSRF_COOKIE_NAME, CSRF_HEADER_NAME, PUBLIC_API_BASE_URL } from "./config";
+import {
+  ANONYMOUS_CSRF_PATHS,
+  CSRF_ANON_COOKIE_NAME_INSECURE,
+  CSRF_ANON_COOKIE_NAME_SECURE,
+  CSRF_COOKIE_NAME,
+  CSRF_HEADER_NAME,
+  PUBLIC_API_BASE_URL,
+} from "./config";
 import { ApiError } from "./errors";
 import type { ApiErrorBody } from "./types";
 
@@ -24,6 +31,26 @@ function readCookie(name: string): string | null {
   return match?.[1] !== undefined ? decodeURIComponent(match[1]) : null;
 }
 
+function readAnonCsrfCookie(): string | null {
+  return readCookie(CSRF_ANON_COOKIE_NAME_SECURE) ?? readCookie(CSRF_ANON_COOKIE_NAME_INSECURE);
+}
+
+/**
+ * `/auth/login` and `/auth/register` need the pre-session token from
+ * `GET /auth/csrf` (see app/core/csrf/anon.py), not the session-bound one —
+ * there is no session yet for that one to be bound to. Fetched lazily, only
+ * when a caller is about to need it and doesn't already have it, so a page
+ * that never submits either form never makes the extra round trip.
+ */
+async function ensureAnonCsrfToken(): Promise<string | null> {
+  const existing = readAnonCsrfCookie();
+  if (existing) {
+    return existing;
+  }
+  await fetch(`${PUBLIC_API_BASE_URL}/auth/csrf`, { credentials: "include" });
+  return readAnonCsrfCookie();
+}
+
 /**
  * Browser-side fetch helper. `credentials: "include"` sends the session
  * cookie the backend set on login/register.
@@ -35,11 +62,12 @@ function readCookie(name: string): string | null {
  * its own `httponly=False` on the backend) so it can be echoed here — an
  * attacker's page cannot read it, which is the whole point.
  *
- * A write made before any session exists (there is none today; see
- * docs/csrf.md's residual on login/registration) simply has no cookie to
- * read, so the header is omitted and the backend's own exemption for those
- * two paths is what makes the call succeed — this function does not decide
- * that, the backend does.
+ * A write made before any session exists — `/auth/login` and
+ * `/auth/register`, per `ANONYMOUS_CSRF_PATHS` above — has no session-bound
+ * cookie to read, but is not exempt either any more: it needs the separate
+ * pre-session token `ensureAnonCsrfToken` fetches on demand. See
+ * app/core/csrf/anon.py for why a merely self-signed token isn't enough on
+ * its own and this still has to be a real cookie the browser holds.
  */
 export async function clientApiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
@@ -49,7 +77,9 @@ export async function clientApiFetch<T>(path: string, init: RequestInit = {}): P
 
   const method = (init.method ?? "GET").toUpperCase();
   if (!CSRF_SAFE_METHODS.has(method) && !headers.has(CSRF_HEADER_NAME)) {
-    const token = readCookie(CSRF_COOKIE_NAME);
+    const token = ANONYMOUS_CSRF_PATHS.has(path)
+      ? await ensureAnonCsrfToken()
+      : readCookie(CSRF_COOKIE_NAME);
     if (token) {
       headers.set(CSRF_HEADER_NAME, token);
     }

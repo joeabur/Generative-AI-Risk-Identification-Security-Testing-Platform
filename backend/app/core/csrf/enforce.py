@@ -31,6 +31,7 @@ from __future__ import annotations
 from fastapi import HTTPException, Request, status
 
 from app.core.config import get_settings
+from app.core.csrf import anon as csrf_anon
 from app.core.csrf.tokens import verify
 
 #: Methods that must not change state, and therefore need no token.
@@ -46,21 +47,33 @@ HEADER_NAME = "X-CSRF-Token"
 #: Server-rendered forms cannot set a header, so a field is accepted too.
 FORM_FIELD = "csrf_token"
 
-#: Routes that cannot carry a token because no session exists yet. Recorded
-#: here, with reasons, rather than as scattered `if` statements.
+#: Routes exempt outright, with reasons, rather than as scattered `if`
+#: statements.
 #:
+#: `logout` is exempt because forcing a victim to log out is an annoyance, not
+#: a compromise, and requiring a token would mean a stale page could not log
+#: someone out. `csrf` (this module's own token-issuing endpoint) is exempt
+#: because it is the one place that has to be reachable with nothing yet —
+#: it is a `GET`, so `requires_token` never reaches this list for it anyway,
+#: but it is named here for the same reason the others are: so the exemption
+#: is a fact about the route, not an accident of method.
+EXEMPT_PATHS = frozenset(
+    {
+        "/api/v1/auth/logout",
+        "/api/v1/auth/csrf",
+    }
+)
+
 #: `login` and `register` are the classic "login CSRF" exposure: an attacker
 #: can forge a request that signs a victim into the *attacker's* account, so
-#: subsequent actions are recorded against it. This is accepted rather than
-#: unnoticed — `docs/csrf.md` says so, and the mitigation (a pre-session token)
-#: is a stated deferral. `logout` is exempt for the opposite reason: forcing a
-#: victim to log out is an annoyance, not a compromise, and requiring a token
-#: would mean a stale page could not log someone out.
-EXEMPT_PATHS = frozenset(
+#: subsequent actions are recorded against it. There is no session to bind an
+#: ordinary token to here, so these two routes are checked against the
+#: pre-session anonymous token from `app/core/csrf/anon.py` instead of being
+#: waved through.
+ANONYMOUS_CSRF_PATHS = frozenset(
     {
         "/api/v1/auth/login",
         "/api/v1/auth/register",
-        "/api/v1/auth/logout",
     }
 )
 
@@ -85,9 +98,24 @@ def token_from(request: Request, form_value: str | None = None) -> str | None:
 def requires_token(request: Request) -> bool:
     if request.method.upper() in SAFE_METHODS:
         return False
+    if request.url.path in ANONYMOUS_CSRF_PATHS:
+        return True
     if request.url.path in EXEMPT_PATHS:
         return False
     return authenticated_by_cookie(request)
+
+
+_ANON_DETAIL = (
+    "Missing or invalid CSRF token. Call GET /api/v1/auth/csrf first and send "
+    f"its {csrf_anon.COOKIE_NAME_SECURE!r} (or {csrf_anon.COOKIE_NAME_INSECURE!r}) "
+    f"cookie's value back in the {HEADER_NAME} header."
+)
+
+_SESSION_DETAIL = (
+    "Missing or invalid CSRF token. Cookie-authenticated requests that "
+    f"change state must send the {HEADER_NAME} header (or a "
+    f"{FORM_FIELD!r} form field) matching the {COOKIE_NAME!r} cookie."
+)
 
 
 def check(request: Request, form_value: str | None = None) -> None:
@@ -100,15 +128,19 @@ def check(request: Request, form_value: str | None = None) -> None:
     if not settings.csrf_protection_enabled or not requires_token(request):
         return
 
+    if request.url.path in ANONYMOUS_CSRF_PATHS:
+        secure = settings.session_cookie_secure
+        cookie_value = request.cookies.get(csrf_anon.cookie_name(secure=secure))
+        if not csrf_anon.verify(
+            cookie_value=cookie_value,
+            provided_value=token_from(request, form_value),
+            secret=settings.effective_csrf_secret,
+        ):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, detail=_ANON_DETAIL)
+        return
+
     session_value = request.cookies.get(settings.session_cookie_name)
     if not verify(
         token_from(request, form_value), session_value, secret=settings.effective_csrf_secret
     ):
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN,
-            detail=(
-                "Missing or invalid CSRF token. Cookie-authenticated requests that "
-                f"change state must send the {HEADER_NAME} header (or a "
-                f"{FORM_FIELD!r} form field) matching the {COOKIE_NAME!r} cookie."
-            ),
-        )
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail=_SESSION_DETAIL)

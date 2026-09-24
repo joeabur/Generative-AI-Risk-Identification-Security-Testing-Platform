@@ -15,12 +15,18 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
+from app.core.csrf import anon as csrf_anon
+from app.core.csrf.enforce import HEADER_NAME
 from app.models.api_key import ApiKey, role_for_scopes, split_token
 from app.models.audit import AuditEvent
 from app.models.organization import Role
 
 
 async def _owner(client: AsyncClient, password: str, suffix: str) -> tuple[str, dict[str, str]]:
+    _owner_anon_token = (await client.get("/api/v1/auth/csrf")).cookies[
+        csrf_anon.cookie_name(secure=get_settings().session_cookie_secure)
+    ]
     owner = await client.post(
         "/api/v1/auth/register",
         json={
@@ -28,6 +34,7 @@ async def _owner(client: AsyncClient, password: str, suffix: str) -> tuple[str, 
             "full_name": "Key Owner",
             "password": password,
         },
+        headers={HEADER_NAME: _owner_anon_token},
     )
     headers = {"Authorization": f"Bearer {owner.json()['access_token']}"}
     org_id = (
@@ -120,6 +127,9 @@ async def test_a_key_with_no_scopes_is_refused(client: AsyncClient, strong_passw
 
 async def test_only_an_admin_can_mint_a_key(client: AsyncClient, strong_password: str) -> None:
     org_id, headers = await _owner(client, strong_password, "e")
+    _engineer_anon_token = (await client.get("/api/v1/auth/csrf")).cookies[
+        csrf_anon.cookie_name(secure=get_settings().session_cookie_secure)
+    ]
     engineer = await client.post(
         "/api/v1/auth/register",
         json={
@@ -127,6 +137,7 @@ async def test_only_an_admin_can_mint_a_key(client: AsyncClient, strong_password
             "full_name": "Engineer",
             "password": strong_password,
         },
+        headers={HEADER_NAME: _engineer_anon_token},
     )
     engineer_headers = {"Authorization": f"Bearer {engineer.json()['access_token']}"}
     await client.post(

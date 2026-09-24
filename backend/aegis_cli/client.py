@@ -56,6 +56,41 @@ class ApiClient:
             )
         return {"Authorization": f"Bearer {self._token}"}
 
+    def fetch_anon_csrf_token(self) -> tuple[str, str]:
+        """The pre-session token `/auth/login` and `/auth/register` now
+        require (app/core/csrf/anon.py) — `login` has no bearer token yet to
+        authenticate with, so it has to go through the same front door a
+        browser does: fetch the cookie the endpoint sets, then send its value
+        back as *both* the cookie and the header on the next request.
+
+        Returns `(cookie_name, value)`: the name matters too, because the
+        server chooses between `__Host-aegis_csrf_anon` and
+        `aegis_csrf_anon` depending on its own `AEGIS_SESSION_COOKIE_SECURE`
+        setting, which this client has no independent way to know — it reads
+        back whichever one the response actually set.
+
+        A fresh `httpx.Client` per call (matching `request()` below) means
+        this can't rely on a cookie jar carrying the value forward the way a
+        browser's would — it is read directly off this response and threaded
+        through explicitly.
+        """
+        url = f"{self._base_url}/auth/csrf"
+        try:
+            # nosemgrep: aegis.ungated-http-client
+            with httpx.Client(timeout=self._timeout, follow_redirects=False) as client:
+                response = client.get(url)
+        except httpx.HTTPError as exc:
+            raise CliError(f"could not reach {url}: {exc}", ExitCode.CONFIG_ERROR) from exc
+        if response.status_code >= 400:
+            raise CliError(
+                f"GET /auth/csrf failed with HTTP {response.status_code}: {_message_of(response)}",
+                _STATUS_CODES.get(response.status_code, ExitCode.CONFIG_ERROR),
+            )
+        for cookie in response.cookies.jar:
+            if cookie.name in ("__Host-aegis_csrf_anon", "aegis_csrf_anon") and cookie.value:
+                return cookie.name, cookie.value
+        raise CliError("GET /auth/csrf did not set a CSRF cookie", ExitCode.CONFIG_ERROR)
+
     def request(
         self,
         method: str,
@@ -65,8 +100,11 @@ class ApiClient:
         params: dict[str, Any] | None = None,
         authenticated: bool = True,
         expect_json: bool = True,
+        extra_headers: dict[str, str] | None = None,
+        extra_cookies: dict[str, str] | None = None,
     ) -> Any:
         headers = self._headers() if authenticated else {}
+        headers.update(extra_headers or {})
         url = f"{self._base_url}{path}"
         try:
             # The one client outside the scope engine, and deliberately so:
@@ -80,7 +118,12 @@ class ApiClient:
             # nosemgrep: aegis.ungated-http-client
             with httpx.Client(timeout=self._timeout, follow_redirects=False) as client:
                 response = client.request(
-                    method, url, json=json_body, params=params, headers=headers
+                    method,
+                    url,
+                    json=json_body,
+                    params=params,
+                    headers=headers,
+                    cookies=extra_cookies,
                 )
         except httpx.HTTPError as exc:
             raise CliError(f"could not reach {url}: {exc}", ExitCode.CONFIG_ERROR) from exc

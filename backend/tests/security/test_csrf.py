@@ -31,7 +31,14 @@ import pytest
 from httpx import AsyncClient
 
 from app.core.config import get_settings
-from app.core.csrf.enforce import COOKIE_NAME, EXEMPT_PATHS, HEADER_NAME, SAFE_METHODS
+from app.core.csrf import anon as csrf_anon
+from app.core.csrf.enforce import (
+    ANONYMOUS_CSRF_PATHS,
+    COOKIE_NAME,
+    EXEMPT_PATHS,
+    HEADER_NAME,
+    SAFE_METHODS,
+)
 from app.core.csrf.tokens import issue, verify
 
 # A signing key for the tests, not a credential: it authenticates nothing
@@ -105,10 +112,21 @@ def test_the_token_is_not_the_session_token() -> None:
 # --------------------------------------------------------------------------
 
 
+def _anon_cookie_name() -> str:
+    return csrf_anon.cookie_name(secure=get_settings().session_cookie_secure)
+
+
 async def _register(client: AsyncClient, email: str, password: str) -> dict[str, str]:
+    # Registration itself now needs the pre-session token (see the
+    # login/register tests below); every other test in this file uses
+    # registration only as a way to get a real session, so it goes through
+    # the same front door a real client would.
+    anon = await client.get("/api/v1/auth/csrf")
+    anon_token = anon.cookies[_anon_cookie_name()]
     response = await client.post(
         "/api/v1/auth/register",
         json={"email": email, "full_name": "C", "password": password},
+        headers={HEADER_NAME: anon_token},
     )
     assert response.status_code == 201, response.text
     return {
@@ -245,26 +263,129 @@ async def test_reads_need_no_token(client: AsyncClient, strong_password: str) ->
         assert response.status_code in (200, 303), f"{path} -> {response.status_code}"
 
 
-async def test_login_and_register_are_exempt_because_no_session_exists_yet(
+async def test_login_and_register_require_the_anonymous_token(
     client: AsyncClient, strong_password: str
 ) -> None:
-    """Stated, not hidden: this leaves login CSRF open.
+    """Login CSRF is closed, not merely accepted.
 
-    An attacker can forge a request that signs a victim into the *attacker's*
-    account. That is a real exposure, accepted deliberately — closing it needs
-    a pre-session token — and `docs/csrf.md` records it rather than letting a
-    reader assume it is covered.
+    Login and register are no longer flatly exempt — `docs/csrf.md` used to
+    record this as an open gap; `app/core/csrf/anon.py` is the fix. Verified
+    end to end: without calling `GET /auth/csrf` first, both are refused.
     """
-    assert "/api/v1/auth/login" in EXEMPT_PATHS
-    assert "/api/v1/auth/register" in EXEMPT_PATHS
+    assert "/api/v1/auth/login" not in EXEMPT_PATHS
+    assert "/api/v1/auth/register" not in EXEMPT_PATHS
+    assert "/api/v1/auth/login" in ANONYMOUS_CSRF_PATHS
+    assert "/api/v1/auth/register" in ANONYMOUS_CSRF_PATHS
 
-    # And they really do work without a token.
-    await _register(client, "csrf-exempt@example.test", strong_password)
-    login = await client.post(
-        "/api/v1/auth/login",
-        json={"email": "csrf-exempt@example.test", "password": strong_password},
+    unprotected_register = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "csrf-anon-missing@example.test",
+            "full_name": "C",
+            "password": strong_password,
+        },
     )
-    assert login.status_code == 200
+    assert unprotected_register.status_code == 403
+    assert "CSRF" in unprotected_register.text
+
+    await _register(client, "csrf-anon-existing@example.test", strong_password)
+    unprotected_login = await client.post(
+        "/api/v1/auth/login",
+        json={"email": "csrf-anon-existing@example.test", "password": strong_password},
+    )
+    assert unprotected_login.status_code == 403
+
+
+async def test_the_csrf_endpoint_issues_a_usable_anonymous_token(client: AsyncClient) -> None:
+    """The happy path a login or registration page actually takes."""
+    issued = await client.get("/api/v1/auth/csrf")
+    assert issued.status_code == 204
+    token = issued.cookies[_anon_cookie_name()]
+
+    registered = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "csrf-anon-ok@example.test",
+            "full_name": "C",
+            "password": "correct-horse-battery-9",
+        },
+        cookies={_anon_cookie_name(): token},
+        headers={HEADER_NAME: token},
+    )
+    assert registered.status_code == 201, registered.text
+
+
+async def test_a_self_obtained_anonymous_token_does_not_help_without_the_cookie(
+    client: AsyncClient,
+) -> None:
+    """The double-submit half: knowing a valid token is not enough.
+
+    An attacker can call `GET /auth/csrf` themselves and get a genuinely
+    valid token — the endpoint hands one to anybody who asks. What must still
+    fail is using that token as the header/field *without also controlling
+    the victim's cookie jar*, since a real cross-site request would not carry
+    it.
+
+    Verified by dropping the cookie-equality check from `anon.verify`: this
+    then returns 201.
+    """
+    issued = await client.get("/api/v1/auth/csrf")
+    token = issued.cookies[_anon_cookie_name()]
+    # The client fixture persists cookies across requests, so the GET above
+    # already left this one sitting in the jar — clear it to actually
+    # simulate a request that never held it.
+    client.cookies.delete(_anon_cookie_name())
+
+    forged = await client.post(
+        "/api/v1/auth/register",
+        json={
+            "email": "csrf-anon-bare@example.test",
+            "full_name": "C",
+            "password": "correct-horse-battery-9",
+        },
+        headers={HEADER_NAME: token},
+        # Deliberately no matching cookie in the jar.
+    )
+    assert forged.status_code == 403
+
+
+async def test_a_planted_anonymous_cookie_pair_does_not_verify() -> None:
+    """The naive-double-submit break, at the anonymous-token level.
+
+    An attacker who can write *some* cookie for the site (not necessarily
+    this one) still cannot pick an arbitrary matching cookie+header pair,
+    because the cookie half must also carry this server's signature.
+    """
+    attacker_chosen = "attacker-picked-value.deadbeef"
+    assert (
+        csrf_anon.verify(
+            cookie_value=attacker_chosen, provided_value=attacker_chosen, secret=SECRET
+        )
+        is False
+    )
+
+
+def test_anonymous_tokens_from_different_secrets_do_not_cross_verify() -> None:
+    token = csrf_anon.issue(secret="one")  # pragma: allowlist secret
+    assert csrf_anon.verify(cookie_value=token, provided_value=token, secret="two") is False
+
+
+@pytest.mark.parametrize("cookie_value", [None, "", "no-separator", ".", "nonce.", ".sig"])
+def test_malformed_anonymous_tokens_are_refused_rather_than_raising(
+    cookie_value: str | None,
+) -> None:
+    assert (
+        csrf_anon.verify(cookie_value=cookie_value, provided_value=cookie_value, secret=SECRET)
+        is False
+    )
+
+
+def test_the_secure_anonymous_cookie_name_is_host_prefixed() -> None:
+    """`__Host-` is what stops a sibling subdomain from overwriting it —
+    browsers reject a `Set-Cookie` with that prefix unless it has no `Domain`
+    attribute, which host-locks it to the exact origin that set it."""
+    assert csrf_anon.cookie_name(secure=True) == "__Host-aegis_csrf_anon"
+    assert csrf_anon.cookie_name(secure=False) == "aegis_csrf_anon"
 
 
 def test_only_side_effect_free_methods_are_safe() -> None:

@@ -16,6 +16,9 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
+from app.core.csrf import anon as csrf_anon
+from app.core.csrf.enforce import HEADER_NAME
 from app.core.scope.engine import ScopeEngine
 from app.core.scope.transport import GatedTransport
 from app.models.audit import AuditEvent
@@ -46,6 +49,9 @@ def _worker_transport() -> GatedTransport:
 async def _setup(
     client: AsyncClient, password: str, suffix: str
 ) -> tuple[str, str, dict[str, str]]:
+    _owner_anon_token = (await client.get("/api/v1/auth/csrf")).cookies[
+        csrf_anon.cookie_name(secure=get_settings().session_cookie_secure)
+    ]
     owner = await client.post(
         "/api/v1/auth/register",
         json={
@@ -53,6 +59,7 @@ async def _setup(
             "full_name": "Report Owner",
             "password": password,
         },
+        headers={HEADER_NAME: _owner_anon_token},
     )
     headers = {"Authorization": f"Bearer {owner.json()['access_token']}"}
     org_id = (
@@ -376,6 +383,9 @@ async def test_a_viewer_can_read_a_report_but_not_the_raw_evidence(
     org_id, target_id, headers = await _setup(client, strong_password, "m")
     run_id = await _run(client, org_id, target_id, headers)
 
+    _viewer_anon_token = (await client.get("/api/v1/auth/csrf")).cookies[
+        csrf_anon.cookie_name(secure=get_settings().session_cookie_secure)
+    ]
     viewer = await client.post(
         "/api/v1/auth/register",
         json={
@@ -383,6 +393,7 @@ async def test_a_viewer_can_read_a_report_but_not_the_raw_evidence(
             "full_name": "Report Viewer",
             "password": strong_password,
         },
+        headers={HEADER_NAME: _viewer_anon_token},
     )
     viewer_headers = {"Authorization": f"Bearer {viewer.json()['access_token']}"}
     await client.post(

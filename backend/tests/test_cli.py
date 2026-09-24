@@ -281,6 +281,13 @@ def test_login_writes_an_owner_only_config(
     monkeypatch.delenv("AEGIS_API_KEY", raising=False)
 
     with respx.mock:
+        # login now fetches the pre-session CSRF cookie first
+        # (app/core/csrf/anon.py) and echoes it back on the POST.
+        respx.get(f"{BASE_URL}/auth/csrf").mock(
+            return_value=httpx.Response(
+                204, headers=[("set-cookie", "aegis_csrf_anon=anon-token-value; Path=/")]
+            )
+        )
         respx.post(f"{BASE_URL}/auth/login").mock(
             return_value=httpx.Response(200, json={"access_token": "jwt-token"})
         )

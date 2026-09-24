@@ -27,10 +27,24 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.core.config import get_settings
+from app.core.csrf import anon as csrf_anon
+from app.core.csrf.enforce import HEADER_NAME
 from app.core.ratelimit.contract import Decision, Dimension, Rule, StoreUnavailable
 from app.core.ratelimit.keys import PREFIX, client_ip, identity_key, normalize_identity
 from app.core.ratelimit.policy import POLICY, RateLimiter
 from app.core.ratelimit.stores import MemoryStore
+
+
+async def _anon_headers(client: AsyncClient) -> dict[str, str]:
+    """The pre-session token `/auth/login` and `/auth/register` now require.
+
+    One fetch per test is enough: the token cookie stays in the client's jar
+    for every subsequent request, so the same header value keeps verifying.
+    """
+    anon = await client.get("/api/v1/auth/csrf")
+    token = anon.cookies[csrf_anon.cookie_name(secure=get_settings().session_cookie_secure)]
+    return {HEADER_NAME: token}
+
 
 # --------------------------------------------------------------------------
 # Bucket keys: the client must not choose its own.
@@ -300,9 +314,11 @@ async def test_repeated_bad_passwords_are_eventually_refused_with_retry_after(
     Verified by setting `rate_limit_enabled` to False: every attempt returns
     401 and this fails.
     """
+    headers = await _anon_headers(client)
     await client.post(
         "/api/v1/auth/register",
         json={"email": "rl-victim@example.test", "full_name": "V", "password": strong_password},
+        headers=headers,
     )
 
     saw_429 = False
@@ -310,6 +326,7 @@ async def test_repeated_bad_passwords_are_eventually_refused_with_retry_after(
         response = await client.post(
             "/api/v1/auth/login",
             json={"email": "rl-victim@example.test", "password": "wrong-password-entirely"},
+            headers=headers,
         )
         if response.status_code == 429:
             saw_429 = True
@@ -333,9 +350,11 @@ async def test_a_throttled_response_cannot_tell_you_whether_the_account_exists(
     Verified by moving `enforce` after the lookup and skipping it when the user
     is absent: the two responses then differ.
     """
+    headers = await _anon_headers(client)
     await client.post(
         "/api/v1/auth/register",
         json={"email": "rl-real@example.test", "full_name": "R", "password": strong_password},
+        headers=headers,
     )
 
     async def throttle(email: str) -> tuple[int, dict[str, object], set[str]]:
@@ -347,6 +366,7 @@ async def test_a_throttled_response_cannot_tell_you_whether_the_account_exists(
                 # is that it is rejected. `pragma` because detect-secrets reads
                 # any literal after a "password" key as a credential.
                 json={"email": email, "password": "nope-nope-nope"},  # pragma: allowlist secret
+                headers=headers,
             )
             error = response.json().get("error", {})
             # `request_id` is unique per request by design, so it is dropped
@@ -373,26 +393,32 @@ async def test_a_successful_login_after_failures_is_not_throttled(
     client: AsyncClient, strong_password: str
 ) -> None:
     """Someone who mistypes a few times then gets it right must not be stopped."""
+    headers = await _anon_headers(client)
     await client.post(
         "/api/v1/auth/register",
         json={"email": "rl-typo@example.test", "full_name": "T", "password": strong_password},
+        headers=headers,
     )
     for _ in range(5):
         await client.post(
             "/api/v1/auth/login",
             json={"email": "rl-typo@example.test", "password": "mistyped"},
+            headers=headers,
         )
 
     good = await client.post(
         "/api/v1/auth/login",
         json={"email": "rl-typo@example.test", "password": strong_password},
+        headers=headers,
     )
     assert good.status_code == 200
 
     # And the counter is clear, so the next few mistakes do not land them at
     # the limit immediately.
     again = await client.post(
-        "/api/v1/auth/login", json={"email": "rl-typo@example.test", "password": "mistyped"}
+        "/api/v1/auth/login",
+        json={"email": "rl-typo@example.test", "password": "mistyped"},
+        headers=headers,
     )
     assert again.status_code == 401
 
@@ -401,6 +427,7 @@ async def test_registration_is_bounded_from_one_address(
     client: AsyncClient, strong_password: str
 ) -> None:
     rule = POLICY["register"][0]
+    headers = await _anon_headers(client)
     statuses = []
     for index in range(rule.limit + 3):
         response = await client.post(
@@ -410,6 +437,7 @@ async def test_registration_is_bounded_from_one_address(
                 "full_name": "R",
                 "password": strong_password,
             },
+            headers=headers,
         )
         statuses.append(response.status_code)
     assert 429 in statuses, "unlimited account creation was permitted from one address"
@@ -445,6 +473,7 @@ async def test_forging_a_forwarded_header_does_not_escape_the_registration_limit
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://testserver") as ac:
+        anon_headers = await _anon_headers(ac)
         statuses = []
         for index in range(POLICY["register"][0].limit + 3):
             response = await ac.post(
@@ -456,7 +485,7 @@ async def test_forging_a_forwarded_header_does_not_escape_the_registration_limit
                 },
                 # A different forged address every time. With the default
                 # `trusted_proxy_count=0` these must all share one bucket.
-                headers={"X-Forwarded-For": f"198.51.100.{index}"},
+                headers={"X-Forwarded-For": f"198.51.100.{index}", **anon_headers},
             )
             statuses.append(response.status_code)
     assert 429 in statuses, (

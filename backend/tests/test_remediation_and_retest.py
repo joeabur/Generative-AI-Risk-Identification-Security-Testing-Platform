@@ -21,6 +21,9 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
+from app.core.csrf import anon as csrf_anon
+from app.core.csrf.enforce import HEADER_NAME
 from app.core.retest.service import baseline_of, mark_awaiting_retest, record_retest
 from app.core.scope.engine import ScopeEngine
 from app.core.scope.transport import GatedTransport
@@ -55,6 +58,9 @@ def _worker_transport() -> GatedTransport:
 async def _setup(
     client: AsyncClient, password: str, suffix: str
 ) -> tuple[str, str, dict[str, str]]:
+    _owner_anon_token = (await client.get("/api/v1/auth/csrf")).cookies[
+        csrf_anon.cookie_name(secure=get_settings().session_cookie_secure)
+    ]
     owner = await client.post(
         "/api/v1/auth/register",
         json={
@@ -62,6 +68,7 @@ async def _setup(
             "full_name": "Fix Owner",
             "password": password,
         },
+        headers={HEADER_NAME: _owner_anon_token},
     )
     headers = {"Authorization": f"Bearer {owner.json()['access_token']}"}
     org_id = (
@@ -270,6 +277,9 @@ async def test_a_task_cannot_be_assigned_to_a_stranger(
     await _run(client, org_id, target_id, headers)
     finding = await _worst_finding(client, org_id, headers)
 
+    _outsider_anon_token = (await client.get("/api/v1/auth/csrf")).cookies[
+        csrf_anon.cookie_name(secure=get_settings().session_cookie_secure)
+    ]
     outsider = await client.post(
         "/api/v1/auth/register",
         json={
@@ -277,6 +287,7 @@ async def test_a_task_cannot_be_assigned_to_a_stranger(
             "full_name": "Stranger",
             "password": strong_password,
         },
+        headers={HEADER_NAME: _outsider_anon_token},
     )
     stranger_id = outsider.json()["user"]["id"]
 
@@ -301,6 +312,9 @@ async def test_a_viewer_can_read_the_board_but_not_change_it(
         headers=headers,
     )
 
+    _viewer_anon_token = (await client.get("/api/v1/auth/csrf")).cookies[
+        csrf_anon.cookie_name(secure=get_settings().session_cookie_secure)
+    ]
     viewer = await client.post(
         "/api/v1/auth/register",
         json={
@@ -308,6 +322,7 @@ async def test_a_viewer_can_read_the_board_but_not_change_it(
             "full_name": "Board Viewer",
             "password": strong_password,
         },
+        headers={HEADER_NAME: _viewer_anon_token},
     )
     viewer_headers = {"Authorization": f"Bearer {viewer.json()['access_token']}"}
     await client.post(
@@ -458,6 +473,9 @@ async def test_an_analyst_cannot_start_a_retest(client: AsyncClient, strong_pass
     await _run(client, org_id, target_id, headers)
     finding = await _worst_finding(client, org_id, headers)
 
+    _analyst_anon_token = (await client.get("/api/v1/auth/csrf")).cookies[
+        csrf_anon.cookie_name(secure=get_settings().session_cookie_secure)
+    ]
     analyst = await client.post(
         "/api/v1/auth/register",
         json={
@@ -465,6 +483,7 @@ async def test_an_analyst_cannot_start_a_retest(client: AsyncClient, strong_pass
             "full_name": "Retest Analyst",
             "password": strong_password,
         },
+        headers={HEADER_NAME: _analyst_anon_token},
     )
     analyst_headers = {"Authorization": f"Bearer {analyst.json()['access_token']}"}
     await client.post(

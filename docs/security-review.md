@@ -496,3 +496,43 @@ the real function against a stubbed `fetch` and a seeded `document.cookie`
 rather than a mock, and was confirmed to fail with the fix reverted before
 being confirmed to pass with it restored.
 
+## Login CSRF closed (§18)
+
+This report used to carry "login CSRF is open" as an accepted gap:
+`/auth/login` and `/auth/register` were exempt from CSRF checking because no
+session exists yet for the ordinary session-bound token to bind to. Closed
+with a pre-session token (`app/core/csrf/anon.py`, `GET /api/v1/auth/csrf`);
+both routes now require it the same way every other cookie-authenticated
+write requires the session-bound one.
+
+**A naive fix — a token that is merely self-signed, with no per-visitor
+binding — would not have closed anything.** The server would hand a
+genuinely valid one to anybody who asked, attacker included, and an
+attacker able to plant a cookie for the site (the sibling-subdomain case)
+could plant that self-obtained token as both halves of the request. The
+property that actually matters is that the value echoed back has to be the
+one sitting in *this specific browser's* cookie jar, with the attacker
+unable to set it — which is what the `__Host-` cookie prefix provides
+(browsers enforce it, refusing a `Set-Cookie` under that name unless it
+carries no `Domain`, `Path=/`, and `Secure`, host-locking it to the exact
+origin). That requires HTTPS; a plain-HTTP deployment gets a same-shaped
+but unprefixed cookie, immune to the naive double-submit break but not to a
+sibling-subdomain one specifically — a narrower, stated residual rather
+than the "no protection" it replaces.
+
+**A regression I caught before it shipped, not after:** the first version
+gated both routes unconditionally, on the same "no Bearer header means
+check the cookie" logic every other route uses. That logic does not apply
+here — login is the request that *produces* the Bearer token, so no caller,
+browser or CLI, can ever present one when calling it. Shipped as written,
+it would have 403'd `aegis-ai login` on its very next invocation. Fixed by
+giving the CLI the same token round trip a browser gets
+(`ApiClient.fetch_anon_csrf_token` in `aegis_cli/client.py`).
+
+Closing this touched 66 call sites across 24 test files that had relied on
+the old exemption. That migration — fetch the token, send the header,
+verified against the full suite — was delegated to a background agent under
+a precise brief; the result (all files fixed, lint/type/test clean, 1379
+passed / 2 skipped / 0 failed) was verified independently afterward rather
+than accepted on report alone.
+

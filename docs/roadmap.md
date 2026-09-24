@@ -2191,3 +2191,94 @@ case); and never overridden when a caller already supplies the header.
 Confirmed the first case fails with the fix reverted (header absent) and
 passes with it restored — the same "break it, watch the test catch it, put
 it back" discipline used for every other control in this project.
+
+## Post-Phase-18: login CSRF closed for real
+
+`docs/csrf.md` carried "login CSRF is open" as an accepted, deliberate gap
+since the CSRF middleware first shipped: `/auth/login` and `/auth/register`
+were flatly exempt because there is no session yet for an ordinary,
+session-bound token to bind to. This closes it with a pre-session token —
+`app/core/csrf/anon.py`, a new `GET /api/v1/auth/csrf` endpoint, and both
+paths moved from `EXEMPT_PATHS` into a new `ANONYMOUS_CSRF_PATHS` in
+`app/core/csrf/enforce.py` that requires it.
+
+### Why a merely self-signed token would not actually fix anything
+
+The first design considered was an HMAC over a random nonce with no
+per-visitor binding — simpler than the session-bound scheme, since there is
+no session value to sign against. It does not work: the server would hand
+out a genuinely valid, correctly-signed token to *anyone* who asked,
+attacker included, and an attacker who can plant a cookie for the site (the
+sibling-subdomain case the session-bound scheme already defends against)
+could plant that self-obtained token as both the cookie and the
+header/field in a forged request. Signing alone proves a token came from
+this server at some point; it says nothing about whose browser holds it.
+`app/core/csrf/anon.py`'s docstring works through this in full, because it
+is exactly the kind of mistake that looks like a fix while changing
+nothing.
+
+The actual fix needs the value the victim's browser echoes back to be the
+exact value sitting in the victim's own cookie jar, with the attacker unable
+to control that cookie. That is what the `__Host-` cookie prefix is for:
+browsers refuse a `Set-Cookie` for a `__Host-`-prefixed name unless it has
+no `Domain` attribute, `Path=/`, and `Secure`, which host-locks it to the
+exact origin that set it — a sibling subdomain cannot set it at all, because
+setting without `Domain` scopes a cookie to the setting host only. `__Host-`
+requires HTTPS, so a deployment serving plain HTTP (local dev, by default)
+falls back to an unprefixed cookie of the same shape: still immune to the
+naive double-submit break (an attacker picking an arbitrary matching pair
+still cannot forge the signature), just not to the sibling-subdomain one.
+Named in `docs/csrf.md` rather than left for a reader to assume is covered.
+
+### A break I found before it shipped: this would have taken down the CLI
+
+The obvious first implementation made `ANONYMOUS_CSRF_PATHS` require the
+token unconditionally, on the reasoning that login/register have no
+`Authorization: Bearer` header to signal "not a browser" the way every other
+route does. That reasoning missed something: **login is the request that
+*produces* the Bearer token**, so nothing can ever carry one yet, which means
+that signal cannot distinguish a browser from `aegis-ai login` or any other
+non-browser caller for these two routes specifically — unlike every other
+route, where Bearer presence already does this job. Requiring the token
+unconditionally would have 403'd the CLI's own login on the very next run.
+
+Caught before committing, by tracing through what the CLI's login path
+actually sends (`aegis_cli/client.py` builds a fresh `httpx.Client` per
+call — no persistent cookie jar, no browser). Fixed by giving the CLI the
+same front door a browser gets: a new `ApiClient.fetch_anon_csrf_token()`
+does the `GET /auth/csrf` round trip and hands `cmd_login` both the cookie
+name and value to send back explicitly (since there is no jar to carry them
+forward automatically the way a browser's does). `tests/test_cli.py`'s
+login test was updated to mock that endpoint too.
+
+### The blast radius, and why it went to a subagent
+
+Flipping enforcement on immediately turned every other test that registers
+or logs in — 66 call sites across 24 files that had never needed a token
+because the paths were exempt — into a 403. Rather than sweep all of it by
+hand under time pressure and risk missing one, the mechanical part (fetch
+the token, pass the header, following the exact pattern already proven in
+`tests/security/test_csrf.py::_register`) went to a background agent with a
+precise brief naming every file, the special cases to watch (the rate
+limiter's exact-count assertions, `test_cli.py`'s respx mock, one grep false
+positive in `test_rasp.py`), and an instruction to run the full suite to
+completion rather than report back early. It came back with all 27 files
+fixed, `ruff`/`ruff format`/`mypy` clean, and **1379 passed, 2 skipped, 0
+failed** — the +13 over the previous 1368 baseline is exactly the new
+`anon.py`-specific tests this change itself added to `test_csrf.py`, not
+anything left over from the migration. Verified independently afterward
+rather than taken on the agent's word alone.
+
+### Deferrals
+
+- **The dashboard's login page's instructional `curl` example**
+  (`app/web/templates/login.html`) and the quickstart script/doc
+  (`docs/examples/quickstart.py`, `docs/installation.md`) were updated to
+  fetch the token first — these are the platform's own worked examples, so
+  leaving them stale would have meant the platform's documentation no longer
+  matched its own enforcement.
+- The `GET /auth/csrf` endpoint is intentionally not rate-limited: it does
+  no database or Redis work, only an HMAC over a fresh random nonce, so the
+  cost of calling it repeatedly is negligible — unlike `/auth/register` and
+  `/auth/login`, which do real work per attempt and are exactly why that
+  budget exists.

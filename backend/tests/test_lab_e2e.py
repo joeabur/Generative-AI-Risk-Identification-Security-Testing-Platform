@@ -30,6 +30,9 @@ import pytest
 import uvicorn
 from httpx import AsyncClient
 
+from app.core.config import get_settings
+from app.core.csrf import anon as csrf_anon
+from app.core.csrf.enforce import HEADER_NAME
 from app.core.scope.engine import ScopeEngine
 from app.core.scope.transport import GatedTransport
 from app.workers.tasks import execute_assessment_run
@@ -155,6 +158,9 @@ LAB_SPEC = {
 
 async def _configure(client: AsyncClient, password: str, base_url: str) -> tuple[str, str, dict]:
     suffix = uuid.uuid4().hex[:8]
+    _owner_anon_token = (await client.get("/api/v1/auth/csrf")).cookies[
+        csrf_anon.cookie_name(secure=get_settings().session_cookie_secure)
+    ]
     owner = await client.post(
         "/api/v1/auth/register",
         json={
@@ -162,6 +168,7 @@ async def _configure(client: AsyncClient, password: str, base_url: str) -> tuple
             "full_name": "Lab Owner",
             "password": password,
         },
+        headers={HEADER_NAME: _owner_anon_token},
     )
     headers = {"Authorization": f"Bearer {owner.json()['access_token']}"}
     org_id = (

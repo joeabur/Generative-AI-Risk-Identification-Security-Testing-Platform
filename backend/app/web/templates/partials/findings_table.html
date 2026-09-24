@@ -28,4 +28,22 @@
 {% else %}
   <p class="empty">No open findings match.</p>
 {% endif %}
+{% if has_prev or has_more %}
+  {% set base = "/app/organizations/" ~ organization_id ~ "/findings" %}
+  {% set qs = "?severity=" ~ severity if severity else "" %}
+  {% set sep = "&" if severity else "?" %}
+  <nav class="pager">
+    {% if has_prev %}
+    <a href="{{ base }}{{ qs }}{{ sep }}page={{ page - 1 }}"
+       hx-get="{{ base }}{{ qs }}{{ sep }}page={{ page - 1 }}"
+       hx-target="#findings-table">&larr; Previous</a>
+    {% endif %}
+    <span class="page-num">Page {{ page }}</span>
+    {% if has_more %}
+    <a href="{{ base }}{{ qs }}{{ sep }}page={{ page + 1 }}"
+       hx-get="{{ base }}{{ qs }}{{ sep }}page={{ page + 1 }}"
+       hx-target="#findings-table">Next &rarr;</a>
+    {% endif %}
+  </nav>
+{% endif %}
 </div>

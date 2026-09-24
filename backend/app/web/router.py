@@ -149,6 +149,12 @@ async def dashboard(
     )
 
 
+#: One page size for every paginated dashboard listing. A constant rather
+#: than a per-route number, so "page 2" means the same span of rows
+#: wherever it appears.
+PAGE_SIZE = 50
+
+
 @router.get("/organizations/{organization_id}/findings", response_class=HTMLResponse)
 async def findings_page(
     request: Request,
@@ -156,19 +162,28 @@ async def findings_page(
     db: DbSession,
     membership: Viewer,
     severity: Annotated[str | None, Query(max_length=20)] = None,
+    page: Annotated[int, Query(ge=1)] = 1,
 ) -> HTMLResponse:
+    offset = (page - 1) * PAGE_SIZE
+    findings = await queries.open_findings(
+        db, organization_id, severity=severity, limit=PAGE_SIZE, offset=offset
+    )
+    has_more = await queries.has_more_findings(
+        db, organization_id, severity=severity, limit=PAGE_SIZE, offset=offset
+    )
     return _page(
         request,
         "findings.html",
         {
             "membership": membership,
             "organization_id": organization_id,
-            "findings": await queries.open_findings(
-                db, organization_id, severity=severity, limit=200
-            ),
+            "findings": findings,
             "severity": (severity or "").upper(),
             "severity_order": queries.SEVERITY_ORDER,
             "actions": _actions(membership),
+            "page": page,
+            "has_prev": page > 1,
+            "has_more": has_more,
         },
         partial="partials/findings_table.html",
     )
@@ -176,17 +191,27 @@ async def findings_page(
 
 @router.get("/organizations/{organization_id}/runs", response_class=HTMLResponse)
 async def runs_page(
-    request: Request, organization_id: uuid.UUID, db: DbSession, membership: Viewer
+    request: Request,
+    organization_id: uuid.UUID,
+    db: DbSession,
+    membership: Viewer,
+    page: Annotated[int, Query(ge=1)] = 1,
 ) -> HTMLResponse:
+    offset = (page - 1) * PAGE_SIZE
+    runs = await queries.recent_runs(db, organization_id, limit=PAGE_SIZE, offset=offset)
+    has_more = await queries.has_more_runs(db, organization_id, limit=PAGE_SIZE, offset=offset)
     return _page(
         request,
         "runs.html",
         {
             "membership": membership,
             "organization_id": organization_id,
-            "runs": await queries.recent_runs(db, organization_id, limit=50),
+            "runs": runs,
             "targets": {t.id: t.name for t in await queries.targets_for(db, organization_id)},
             "actions": _actions(membership),
+            "page": page,
+            "has_prev": page > 1,
+            "has_more": has_more,
         },
         partial="partials/runs_table.html",
     )

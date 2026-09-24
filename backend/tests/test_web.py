@@ -31,6 +31,7 @@ from app.core.config import get_settings
 from app.core.csrf import anon as csrf_anon
 from app.core.csrf.enforce import HEADER_NAME
 from app.core.probes.models import Category, Confidence, Severity
+from app.models.assessment_run import AssessmentRun, RunStatus
 from app.models.authorization import Authorization
 from app.models.finding import Finding, FindingStatus, Stability
 from app.web import queries
@@ -489,3 +490,130 @@ async def test_the_index_without_a_session_shows_sign_in_rather_than_json(
     assert response.status_code == 200
     assert "Sign in" in response.text
     assert "aegis-ai login" in response.text
+
+
+# --------------------------------------------------------------------------
+# Pagination (docs/security-review.md's "dashboard has no pagination" gap).
+# --------------------------------------------------------------------------
+
+
+async def test_findings_page_two_shows_rows_the_first_page_did_not(
+    client: AsyncClient, db_session: AsyncSession, strong_password: str
+) -> None:
+    """The property that distinguishes real pagination from a bigger page:
+    row 51 must appear on page 2 and nowhere on page 1, and page 1 must not
+    silently include it too.
+
+    Verified by dropping `.offset(offset)` from `queries.open_findings`: page
+    2 then renders the exact same 50 rows as page 1.
+    """
+    org_id, target_id, cookie = await _setup(client, strong_password, uuid.uuid4().hex[:8])
+    jar = {"aegis_session": cookie}
+
+    # Worst-first order means the seeded rank controls what lands where;
+    # descending risk_score from 99.0 down makes row order unambiguous.
+    for rank in range(web_router.PAGE_SIZE + 1):
+        db_session.add(
+            _finding(
+                org_id,
+                target_id,
+                title=f"Finding rank {rank}",
+                risk_score=99.0 - rank,
+            )
+        )
+    await db_session.commit()
+
+    page1 = await client.get(f"/app/organizations/{org_id}/findings", cookies=jar)
+    page2 = await client.get(f"/app/organizations/{org_id}/findings?page=2", cookies=jar)
+    assert page1.status_code == page2.status_code == 200
+
+    assert "Finding rank 0" in page1.text
+    assert f"Finding rank {web_router.PAGE_SIZE - 1}" in page1.text
+    assert f"Finding rank {web_router.PAGE_SIZE}" not in page1.text
+
+    assert f"Finding rank {web_router.PAGE_SIZE}" in page2.text
+    assert "Finding rank 0" not in page2.text
+
+    assert "Next" in page1.text
+    assert "Previous" not in page1.text
+    assert "Next" not in page2.text
+    assert "Previous" in page2.text
+
+
+async def test_findings_pagination_preserves_the_severity_filter(
+    client: AsyncClient, db_session: AsyncSession, strong_password: str
+) -> None:
+    """A "next page" link that dropped the active filter would silently widen
+    the result set the operator was looking at."""
+    org_id, target_id, cookie = await _setup(client, strong_password, uuid.uuid4().hex[:8])
+    jar = {"aegis_session": cookie}
+
+    for rank in range(web_router.PAGE_SIZE + 1):
+        db_session.add(
+            _finding(
+                org_id,
+                target_id,
+                title=f"High rank {rank}",
+                severity=Severity.HIGH,
+                risk_score=50.0 - rank,
+            )
+        )
+    db_session.add(_finding(org_id, target_id, title="Unrelated critical"))
+    await db_session.commit()
+
+    page1 = await client.get(f"/app/organizations/{org_id}/findings?severity=HIGH", cookies=jar)
+    assert "severity=HIGH" in page1.text
+    assert "page=2" in page1.text
+
+    page2 = await client.get(
+        f"/app/organizations/{org_id}/findings?severity=HIGH&page=2", cookies=jar
+    )
+    assert page2.status_code == 200
+    assert f"High rank {web_router.PAGE_SIZE}" in page2.text
+    assert "Unrelated critical" not in page2.text
+
+
+async def _run(org_id: str, target_id: str, **overrides: object) -> AssessmentRun:
+    values: dict[str, object] = {
+        "organization_id": uuid.UUID(org_id),
+        "target_id": uuid.UUID(target_id),
+        "status": RunStatus.COMPLETED,
+        "profile": "connectivity",
+    }
+    values.update(overrides)
+    return AssessmentRun(**values)
+
+
+async def test_runs_page_two_shows_runs_the_first_page_did_not(
+    client: AsyncClient, db_session: AsyncSession, strong_password: str
+) -> None:
+    org_id, target_id, cookie = await _setup(client, strong_password, uuid.uuid4().hex[:8])
+    jar = {"aegis_session": cookie}
+
+    base = datetime.now(UTC)
+    for rank in range(web_router.PAGE_SIZE + 1):
+        db_session.add(
+            await _run(
+                org_id,
+                target_id,
+                # Most-recent-first order means an earlier `created_at` for a
+                # higher rank puts rank 0 on page 1 and the highest rank last.
+                created_at=base - timedelta(minutes=rank),
+                error_message=f"run rank {rank}",
+            )
+        )
+    await db_session.commit()
+
+    page1 = await client.get(f"/app/organizations/{org_id}/runs", cookies=jar)
+    page2 = await client.get(f"/app/organizations/{org_id}/runs?page=2", cookies=jar)
+    assert page1.status_code == page2.status_code == 200
+
+    assert "run rank 0" in page1.text
+    assert f"run rank {web_router.PAGE_SIZE}" not in page1.text
+    assert f"run rank {web_router.PAGE_SIZE}" in page2.text
+    assert "run rank 0" not in page2.text
+
+    assert "Older" in page1.text
+    assert "Newer" not in page1.text
+    assert "Older" not in page2.text
+    assert "Newer" in page2.text

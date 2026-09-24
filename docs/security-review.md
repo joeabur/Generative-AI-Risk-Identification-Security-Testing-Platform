@@ -163,7 +163,6 @@ Stated plainly, because a review that lists only strengths is marketing.
 | DAST scanners are not gated at the socket | Nuclei and ZAP open their own connections — see the Phase 15 section below |
 | Advisory lookup off by default | SCA reports what is installed, not what is vulnerable, unless enabled |
 | No inbound webhook endpoint | Workflows and PR publishing are driven by CI, never by an event from a code host |
-| Dashboard has no pagination | Findings cap at 200, runs at 50; the API is the complete answer |
 | No release has been cut | `release.yml` is written and structurally asserted, but has never run end to end |
 | No container image signing | Images are scanned; none is published, so none is signed |
 | No runtime-protection measurement | Claimed WAF/RASP controls are recorded and explicitly marked "not tested" |
@@ -567,4 +566,26 @@ plaintext, the wrong key cannot read a bundle written under the right one,
 a single flipped byte fails to decrypt at all rather than producing
 corrupted plaintext, two writes of identical content never share
 ciphertext) and `tests/test_config.py` (the key-validation failure modes).
+
+## Dashboard pagination
+
+The "dashboard has no pagination" gap row is removed: `/app/.../findings`
+and `/app/.../runs` now take a `page` query parameter (`app/web/router.py`'s
+`PAGE_SIZE`, 50 rows), with "Previous"/"Next" and "Newer"/"Older" links
+rendered only when there is a page on that side to go to —
+`queries.has_more_findings` / `has_more_runs` ask that question directly
+with a cheap existence query rather than over-fetching and trimming.
+`workflows` was left as a fixed, capped list: it was not named in the
+original gap and stays a smaller, well-scoped change rather than one that
+crept to cover everything on the page.
+
+Digests are unaffected, and so is every other dashboard property this
+report already asserts: `offset` only changes *which* rows a page selects,
+not their order or the risk-score-first ranking `open_findings` already
+used — a filter and a page number compose without either widening the
+other's result set, which `tests/test_web.py` checks directly by seeding
+one page's worth of matching rows plus one more and asserting the extra
+row appears on page 2, under a filter, and nowhere on page 1. Verified to
+fail (page 2 duplicating page 1) with `.offset()` reverted, before
+restoring the fix.
 

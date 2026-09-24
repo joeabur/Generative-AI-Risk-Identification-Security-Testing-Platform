@@ -2361,3 +2361,42 @@ produce identical ciphertext, which is what a fresh nonce per write buys.
 Verified the write-path test fails when encryption is skipped, by
 temporarily reverting the `write()` change and confirming three tests catch
 it, before restoring the fix.
+
+## Post-Phase-18: dashboard pagination
+
+`docs/security-review.md` listed "dashboard has no pagination" with the
+consequence spelled out plainly: findings capped at 200, runs at 50, with
+the API named as the actual complete answer for anyone who needed more.
+That consequence is what changed — `/app/.../findings` and `/app/.../runs`
+now take a `page` query parameter (`PAGE_SIZE = 50` in `app/web/router.py`)
+instead of a single capped page, so the dashboard itself, not just the API,
+can reach everything.
+
+Scoped to the two routes the gap actually named. `workflows_page` still
+renders a fixed list — it was not part of the stated gap, and stretching
+this change to cover it would have been scope creep against what was
+actually being fixed rather than a continuation of it.
+
+**A cheap existence query answers "is there a next page" rather than
+over-fetching.** `queries.has_more_findings` / `has_more_runs` run the same
+filtered query the page itself ran, offset one page further, `LIMIT 1` —
+asking the one further question a "Next" link needs, rather than fetching
+`limit + 1` rows on every page load and trimming one off just to answer it
+on the last page, where the answer is always no.
+
+**Digests, ordering and filters compose with a page number rather than
+being replaced by one.** `open_findings`'s `offset` keyword changes which
+slice of the already risk-score-ordered result set a page selects; it does
+not change the ordering itself, and a severity filter combined with a page
+number still filters first and pages the filtered set, not the whole one —
+`findings_table.html`'s pager links carry the active `severity` query
+parameter forward for exactly this reason, checked directly in
+`tests/test_web.py::test_findings_pagination_preserves_the_severity_filter`
+by seeding one page's worth of matching rows plus one unrelated one and
+asserting the unrelated row stays out of both pages.
+
+Proven the same way as everything else in this file: seed one page's worth
+of rows plus one, assert the extra row is absent from page 1 and present on
+page 2 (and the reverse for the "Previous"/"Next" and "Newer"/"Older" link
+visibility), and confirm the test actually fails — page 2 rendering the
+same rows as page 1 — with `.offset()` reverted, before restoring it.

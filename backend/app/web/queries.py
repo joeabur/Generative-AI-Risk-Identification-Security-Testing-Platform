@@ -164,15 +164,35 @@ async def overview(db: AsyncSession, organization_id: uuid.UUID) -> Overview:
 
 
 async def recent_runs(
-    db: AsyncSession, organization_id: uuid.UUID, *, limit: int = 10
+    db: AsyncSession, organization_id: uuid.UUID, *, limit: int = 10, offset: int = 0
 ) -> Sequence[AssessmentRun]:
     result = await db.execute(
         select(AssessmentRun)
         .where(AssessmentRun.organization_id == organization_id)
         .order_by(AssessmentRun.created_at.desc())
+        .offset(offset)
         .limit(limit)
     )
     return list(result.scalars().all())
+
+
+async def has_more_runs(
+    db: AsyncSession, organization_id: uuid.UUID, *, limit: int, offset: int
+) -> bool:
+    """Whether a run exists past the page just fetched.
+
+    A second, cheap query rather than fetching `limit + 1` rows and trimming
+    one off: the caller already has exactly the page it asked for, and this
+    answers only the one further question a "next" link needs.
+    """
+    result = await db.execute(
+        select(AssessmentRun.id)
+        .where(AssessmentRun.organization_id == organization_id)
+        .order_by(AssessmentRun.created_at.desc())
+        .offset(offset + limit)
+        .limit(1)
+    )
+    return result.first() is not None
 
 
 async def open_findings(
@@ -181,6 +201,7 @@ async def open_findings(
     *,
     severity: str | None = None,
     limit: int = 50,
+    offset: int = 0,
 ) -> Sequence[Finding]:
     """Open findings, worst first.
 
@@ -193,8 +214,34 @@ async def open_findings(
     )
     if severity and severity.upper() in SEVERITY_ORDER:
         statement = statement.where(Finding.severity == Severity(severity.upper()))
-    statement = statement.order_by(Finding.risk_score.desc(), Finding.last_seen.desc()).limit(limit)
+    statement = (
+        statement.order_by(Finding.risk_score.desc(), Finding.last_seen.desc())
+        .offset(offset)
+        .limit(limit)
+    )
     return list((await db.execute(statement)).scalars().all())
+
+
+async def has_more_findings(
+    db: AsyncSession,
+    organization_id: uuid.UUID,
+    *,
+    severity: str | None = None,
+    limit: int,
+    offset: int,
+) -> bool:
+    statement = select(Finding.id).where(
+        Finding.organization_id == organization_id,
+        Finding.status.not_in(CLOSED_STATUSES),
+    )
+    if severity and severity.upper() in SEVERITY_ORDER:
+        statement = statement.where(Finding.severity == Severity(severity.upper()))
+    statement = (
+        statement.order_by(Finding.risk_score.desc(), Finding.last_seen.desc())
+        .offset(offset + limit)
+        .limit(1)
+    )
+    return (await db.execute(statement)).first() is not None
 
 
 async def recent_workflow_runs(

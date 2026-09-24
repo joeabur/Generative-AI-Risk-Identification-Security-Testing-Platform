@@ -23,4 +23,19 @@
 {% else %}
   <p class="empty">No runs yet.</p>
 {% endif %}
+{% if has_prev or has_more %}
+  <nav class="pager">
+    {% if has_prev %}
+    <a href="/app/organizations/{{ organization_id }}/runs?page={{ page - 1 }}"
+       hx-get="/app/organizations/{{ organization_id }}/runs?page={{ page - 1 }}"
+       hx-target="#runs-table">&larr; Newer</a>
+    {% endif %}
+    <span class="page-num">Page {{ page }}</span>
+    {% if has_more %}
+    <a href="/app/organizations/{{ organization_id }}/runs?page={{ page + 1 }}"
+       hx-get="/app/organizations/{{ organization_id }}/runs?page={{ page + 1 }}"
+       hx-target="#runs-table">Older &rarr;</a>
+    {% endif %}
+  </nav>
+{% endif %}
 </div>

@@ -85,7 +85,8 @@ _EXTENSIONS = {
 
 def get_evidence_store() -> EvidenceStore:
     """The evidence store, as a dependency so a test can point it elsewhere."""
-    return EvidenceStore(Path(get_settings().evidence_root))
+    settings = get_settings()
+    return EvidenceStore(Path(settings.evidence_root), key=settings.evidence_encryption_key_bytes)
 
 
 async def _load_run_and_target(

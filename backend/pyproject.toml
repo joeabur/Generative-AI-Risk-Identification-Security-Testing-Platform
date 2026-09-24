@@ -14,6 +14,10 @@ dependencies = [
     "alembic>=1.13",
     "argon2-cffi>=23.1",
     "pyjwt>=2.9",
+    # AES-256-GCM for evidence at rest (app/core/evidence/crypto.py). Already
+    # present transitively via pyjwt's crypto extra; pinned directly because
+    # this project now imports it on its own, not just through pyjwt.
+    "cryptography>=43",
     "celery>=5.4",
     "redis>=5.1",
     "structlog>=24.4",

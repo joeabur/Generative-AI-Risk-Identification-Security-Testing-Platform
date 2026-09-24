@@ -11,12 +11,21 @@ digest, so an altered or removed bundle breaks verification at a specific
 entry rather than passing unnoticed. That is what makes "this evidence is
 what the tool saw" a checkable claim instead of an assurance.
 
-**Key management, stated honestly:** there is no encryption at rest here.
-§13 makes it optional, and a half-built implementation with an undocumented
-key model would be worse than none — an operator would believe the evidence
-was protected when the key sat beside it. What protects a bundle today is
-filesystem permissions and the redaction that ran before it was written.
-`docs/roadmap.md` records this as a deliberate gap.
+**Encryption at rest is optional, per §13.** Configuring
+`AEGIS_EVIDENCE_ENCRYPTION_KEY` (`app/core/config.py`) encrypts every bundle
+written from then on with AES-256-GCM (`app/core/evidence/crypto.py`) before
+it touches disk; without it, a bundle is written exactly as it always was,
+protected by filesystem permissions and the redaction that ran before it was
+built. `docs/roadmap.md` records the key model this uses and, deliberately,
+does not claim to solve: one static key, no rotation, no per-tenant key.
+
+**Turning the key on after bundles already exist does not retrofit them.**
+A bundle written before the key was configured is plaintext on disk; `read`
+and `verify` for that bundle, once a key is configured, attempt to decrypt
+plaintext bytes and fail (`EvidenceError` / a verify problem) rather than
+silently returning garbage. There is no migration tool to re-encrypt
+existing bundles in place — the key is meant to be set before a deployment
+starts collecting evidence, not switched on mid-run.
 """
 
 import hashlib
@@ -26,6 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.core.evidence.bundle import EvidenceBundle, secret_kinds
+from app.core.evidence.crypto import DecryptionError, decrypt, encrypt
 
 # The first entry's "previous" value. A fixed, documented starting point,
 # so a chain of length one is still verifiable.
@@ -58,8 +68,11 @@ class VerificationResult:
 
 
 class EvidenceStore:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, key: bytes | None = None) -> None:
+        #: `None` means bundles are written and read as plaintext — the
+        #: default, and the only option before encryption at rest existed.
         self._root = root
+        self._key = key
 
     def run_dir(self, run_id: str) -> Path:
         return self._root / run_id
@@ -100,7 +113,11 @@ class EvidenceStore:
         # what the measurement was based on.
         if path.exists():
             return digest
-        path.write_bytes(payload)
+        # Content addressing and the chain both key off the *plaintext*
+        # digest — encryption is something that happens to the bytes on
+        # disk, not a second identity for the same observation.
+        on_disk = encrypt(payload, key=self._key) if self._key else payload
+        path.write_bytes(on_disk)
 
         entries = self.read_manifest(run_id)
         previous = entries[-1].chain if entries else CHAIN_GENESIS
@@ -128,10 +145,19 @@ class EvidenceStore:
         return entries
 
     def read(self, run_id: str, digest: str) -> bytes:
+        """Plaintext bytes, regardless of whether this store is configured
+        with a key — a caller should never need to know that to read a
+        bundle back."""
         path = self._bundles_dir(run_id) / f"{digest.removeprefix('sha256:')}.json"
         if not path.exists():
             raise EvidenceError(f"no evidence bundle {digest} for run {run_id}")
-        return path.read_bytes()
+        on_disk = path.read_bytes()
+        if not self._key:
+            return on_disk
+        try:
+            return decrypt(on_disk, key=self._key)
+        except DecryptionError as exc:
+            raise EvidenceError(f"could not decrypt evidence bundle {digest}: {exc}") from exc
 
     def verify(self, run_id: str) -> VerificationResult:
         """Check every link and every bundle's content against its name.
@@ -161,7 +187,17 @@ class EvidenceStore:
             if not path.exists():
                 problems.append(f"entry {index}: bundle {entry.digest} is missing")
             else:
-                actual = "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+                on_disk = path.read_bytes()
+                if self._key:
+                    try:
+                        plaintext = decrypt(on_disk, key=self._key)
+                    except DecryptionError as exc:
+                        problems.append(f"entry {index}: bundle {entry.digest} — {exc}")
+                        previous = entry.chain
+                        continue
+                else:
+                    plaintext = on_disk
+                actual = "sha256:" + hashlib.sha256(plaintext).hexdigest()
                 if actual != entry.digest:
                     problems.append(
                         f"entry {index}: bundle content does not match its digest "

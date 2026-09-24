@@ -131,7 +131,8 @@ def _store_evidence(run_id: uuid.UUID, result: ScanResult) -> str | None:
     """
     if result.evidence_bundle is None:
         return None
-    store = EvidenceStore(Path(get_settings().evidence_root))
+    settings = get_settings()
+    store = EvidenceStore(Path(settings.evidence_root), key=settings.evidence_encryption_key_bytes)
     try:
         return store.write(str(run_id), result.evidence_bundle)
     except (EvidenceError, OSError) as exc:

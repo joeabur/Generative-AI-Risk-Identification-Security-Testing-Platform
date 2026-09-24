@@ -38,8 +38,10 @@ redacted but real exchanges with a customer's system.
 - Shared across API and worker replicas — both read it.
 - Back it up with the same care as the database; a report without its evidence
   is unverifiable.
-- **Unencrypted at rest.** Use an encrypted volume; this is a stated residual
-  risk (`docs/threat-model.md`).
+- **Unencrypted at rest unless `AEGIS_EVIDENCE_ENCRYPTION_KEY` is set**
+  (`docs/configuration.md`); off is the default. Set it, or use an encrypted
+  volume regardless — this is a stated residual either way
+  (`docs/threat-model.md`).
 - Have a retention and deletion policy. `purge` genuinely deletes.
 
 ## Database

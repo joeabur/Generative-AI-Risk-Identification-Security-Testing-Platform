@@ -111,8 +111,12 @@ Stated rather than hidden; the full list with verification notes is in
 - **The audit log is append-only by construction, not by database grant.** The
   service has no update or delete path; revoking `UPDATE`/`DELETE` at the
   database level is recommended in `docs/configuration.md` and not yet enforced.
-- **Evidence is stored unencrypted at rest** under `EVIDENCE_ROOT`, relying on
-  filesystem permissions and whatever the deployment provides.
+- **Evidence is stored unencrypted at rest under `EVIDENCE_ROOT` by
+  default**, relying on filesystem permissions and whatever the deployment
+  provides. `AEGIS_EVIDENCE_ENCRYPTION_KEY` (`docs/configuration.md`) turns
+  on AES-256-GCM encryption for bundles written after it is set; it is
+  opt-in, with one static key and no rotation, not a default or a general
+  key-management solution.
 - **`docker compose up --build` is unverified** in this environment.
 - **No rate limiting on the platform's own API**, so a valid credential can
   issue requests as fast as it likes.

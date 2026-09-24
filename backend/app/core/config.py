@@ -1,3 +1,5 @@
+import base64
+import binascii
 from functools import lru_cache
 from typing import Literal
 
@@ -119,6 +121,31 @@ class Settings(BaseSettings):
         """
         return self.csrf_secret or self.jwt_secret
 
+    # --- evidence at rest (§13) -------------------------------------------
+    #: Optional, per §13. Absent means a bundle is written exactly as it
+    #: always was — the honestly-stated gap in `app/core/evidence/store.py`
+    #: stays the default, not something silently half-solved. Present, it
+    #: must be a base64-encoded 32-byte (AES-256) key, validated eagerly in
+    #: `model_post_init` below rather than on first write, so a typo fails
+    #: at startup instead of after a run has already collected evidence
+    #: nobody can now get back onto disk.
+    evidence_encryption_key: str | None = Field(default=None, alias="AEGIS_EVIDENCE_ENCRYPTION_KEY")
+
+    @property
+    def evidence_encryption_key_bytes(self) -> bytes | None:
+        if not self.evidence_encryption_key:
+            return None
+        try:
+            key = base64.b64decode(self.evidence_encryption_key, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("AEGIS_EVIDENCE_ENCRYPTION_KEY must be valid base64") from exc
+        if len(key) != 32:
+            raise ValueError(
+                "AEGIS_EVIDENCE_ENCRYPTION_KEY must decode to exactly 32 bytes "
+                f"(AES-256); got {len(key)}"
+            )
+        return key
+
     def model_post_init(self, __context: object) -> None:
         if (
             self.environment == "production"
@@ -128,6 +155,9 @@ class Settings(BaseSettings):
                 "JWT_SECRET must be set explicitly when ENVIRONMENT=production; "
                 "refusing to start with the local development default."
             )
+        # Accessed for its side effect: raises now, at startup, rather than
+        # on the first evidence write during a run.
+        _ = self.evidence_encryption_key_bytes
 
 
 @lru_cache

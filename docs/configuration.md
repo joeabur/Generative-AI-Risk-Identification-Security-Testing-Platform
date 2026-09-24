@@ -16,6 +16,7 @@ that disables scope enforcement** — that is deliberate and permanent.
 | `CORS_ALLOWED_ORIGINS` | local frontend | |
 | `SESSION_COOKIE_SECURE` | `false` | Opt-in so local HTTP development works; set it in production |
 | `EVIDENCE_ROOT` | `var/evidence` | A path, not a URL. Evidence never leaves the deployment by default |
+| `AEGIS_EVIDENCE_ENCRYPTION_KEY` | unset (plaintext) | Base64, 32 bytes (AES-256). One static key, no rotation — set before a deployment starts collecting evidence, not partway through |
 
 ## Credentials are held by reference
 
@@ -86,6 +87,9 @@ outbound destination is an operator decision.
 - `ENVIRONMENT=production` and a real `JWT_SECRET` (startup refuses otherwise).
 - `SESSION_COOKIE_SECURE=true` behind TLS.
 - `EVIDENCE_ROOT` on storage you have a retention and deletion policy for.
+- `AEGIS_EVIDENCE_ENCRYPTION_KEY` set before the first run, if evidence
+  encryption at rest is required — there is no tool to encrypt bundles
+  already written without it.
 - Separate database credentials for the app role; consider revoking `UPDATE` and
   `DELETE` on `audit_logs` at the database level. The application never issues
   them, but defence in depth here is cheap (tracked in `docs/roadmap.md`).

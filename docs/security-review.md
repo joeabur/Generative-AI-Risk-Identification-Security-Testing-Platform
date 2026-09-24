@@ -157,8 +157,7 @@ Stated plainly, because a review that lists only strengths is marketing.
 |---|---|
 | Rate limiting fails open when Redis is unavailable | Guessing is then bounded only by Argon2's cost; logged at error level, alert on it |
 | No visibility into active sessions, and no per-session revocation by name | Only "this session" (`/auth/logout`) or "every session" (`/auth/logout-all`) is expressible |
-| No encryption at rest for evidence | A host compromise yields redacted evidence bundles |
-| Login CSRF is unprotected | `/auth/login` and `/auth/register` are exempt; an attacker can sign a victim into the attacker's account |
+| Evidence encryption at rest is opt-in, not the default | `AEGIS_EVIDENCE_ENCRYPTION_KEY` unset (the out-of-the-box state) means a bundle is protected only by filesystem permissions and redaction, same as before this existed |
 | No signature verification for plugins | The allowlist and an optional hash are the controls |
 | Malware scanning of dependencies absent | Container, licence, EOL and name-confusion analysis exist; nothing checks a package for a malicious payload |
 | DAST scanners are not gated at the socket | Nuclei and ZAP open their own connections — see the Phase 15 section below |
@@ -535,4 +534,37 @@ verified against the full suite — was delegated to a background agent under
 a precise brief; the result (all files fixed, lint/type/test clean, 1379
 passed / 2 skipped / 0 failed) was verified independently afterward rather
 than accepted on report alone.
+
+## Evidence encryption at rest, made available (§13)
+
+The "no encryption at rest" gap row above used to have no mitigation to
+point to at all. There is now one, opt-in: `AEGIS_EVIDENCE_ENCRYPTION_KEY`
+(`app/core/config.py`) turns on AES-256-GCM for every bundle written from
+then on (`app/core/evidence/crypto.py`, wired into
+`app/core/evidence/store.py`). Unset — the out-of-the-box state, and what
+every existing deployment already has — nothing changes: a bundle is
+written exactly as it always was, protected by filesystem permissions and
+the redaction that already ran before it was built.
+
+**This is deliberately not a general secrets-management feature.** One
+static key, read from an environment variable exactly the way `JWT_SECRET`
+and `AEGIS_CSRF_SECRET` already are; no rotation, no per-tenant key, no KMS
+integration, and no tool to re-encrypt bundles that already exist on disk
+before the key was set. `docs/roadmap.md`'s account of this explains why
+that is the honest scope rather than an omission: a half-built key-rotation
+or multi-tenant-key story would be worse than none, because an operator
+would believe more was protected than actually is. This applies the same
+trade the platform already made for every other secret it holds to one
+more thing, not a new model invented just for it.
+
+A misconfigured key (not valid base64, or not exactly 32 bytes) is refused
+at settings construction — `Settings.model_post_init` accesses
+`evidence_encryption_key_bytes` for its side effect, so a typo fails at
+process startup rather than on the first evidence write during a run, by
+which point the probe's observation would already be gone. Covered end to
+end in `tests/test_evidence.py` (encrypted bytes never touch disk in
+plaintext, the wrong key cannot read a bundle written under the right one,
+a single flipped byte fails to decrypt at all rather than producing
+corrupted plaintext, two writes of identical content never share
+ciphertext) and `tests/test_config.py` (the key-validation failure modes).
 

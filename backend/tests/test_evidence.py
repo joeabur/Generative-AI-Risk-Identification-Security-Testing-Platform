@@ -274,3 +274,96 @@ def test_a_purge_actually_deletes(tmp_path: Path) -> None:
     assert not (tmp_path / "run-6").exists()
     assert store.read_manifest("run-6") == []
     assert store.purge("run-6") == 0
+
+
+# --- encryption at rest (§13) ----------------------------------------------
+
+_KEY = b"\x01" * 32
+_OTHER_KEY = b"\x02" * 32
+
+
+def test_an_unconfigured_store_writes_plaintext_to_disk(tmp_path: Path) -> None:
+    """The default, unchanged by encryption existing as an option."""
+    store = EvidenceStore(tmp_path)
+    digest = store.write("run-enc-0", _bundle("in the clear"))
+    path = tmp_path / "run-enc-0" / "bundles" / f"{digest.removeprefix('sha256:')}.json"
+    assert b"in the clear" in path.read_bytes()
+
+
+def test_a_configured_store_does_not_write_plaintext_to_disk(tmp_path: Path) -> None:
+    """The property that makes this an encryption-at-rest control rather than
+    a checkbox: the bytes on disk must not contain the plaintext."""
+    store = EvidenceStore(tmp_path, key=_KEY)
+    digest = store.write("run-enc-1", _bundle("secret-shaped-but-not-a-credential"))
+    path = tmp_path / "run-enc-1" / "bundles" / f"{digest.removeprefix('sha256:')}.json"
+    assert b"secret-shaped-but-not-a-credential" not in path.read_bytes()
+
+
+def test_reading_back_a_configured_store_returns_the_original_plaintext(
+    tmp_path: Path,
+) -> None:
+    """The other half: encryption must be transparent to a caller of `read`."""
+    store = EvidenceStore(tmp_path, key=_KEY)
+    bundle = _bundle("round trip")
+    digest = store.write("run-enc-2", bundle)
+    assert store.read("run-enc-2", digest) == bundle.canonical_bytes()
+
+
+def test_verification_still_works_through_encryption(tmp_path: Path) -> None:
+    """The chain has to keep meaning what it always meant, encrypted or not —
+    digests are computed over plaintext, so this must not silently start
+    comparing ciphertext to a plaintext digest."""
+    store = EvidenceStore(tmp_path, key=_KEY)
+    store.write("run-enc-3", _bundle("one"))
+    store.write("run-enc-3", _bundle("two", probe_id="AEGIS-TEST-030"))
+    assert store.verify("run-enc-3").ok
+
+
+def test_the_wrong_key_cannot_read_an_encrypted_bundle(tmp_path: Path) -> None:
+    """Encryption that any key could undo would not be encryption. Verified
+    at the level a caller actually hits: `read`, not just the primitive."""
+    writer = EvidenceStore(tmp_path, key=_KEY)
+    digest = writer.write("run-enc-4", _bundle("only for the right key"))
+
+    reader = EvidenceStore(tmp_path, key=_OTHER_KEY)
+    with pytest.raises(EvidenceError, match="could not decrypt"):
+        reader.read("run-enc-4", digest)
+
+
+def test_verify_reports_the_wrong_key_as_a_problem_not_a_crash(tmp_path: Path) -> None:
+    writer = EvidenceStore(tmp_path, key=_KEY)
+    writer.write("run-enc-5", _bundle("wrong reader"))
+
+    reader = EvidenceStore(tmp_path, key=_OTHER_KEY)
+    result = reader.verify("run-enc-5")
+    assert not result.ok
+    assert any("bundle" in problem for problem in result.problems)
+
+
+def test_a_tampered_encrypted_bundle_fails_to_decrypt_rather_than_lying(
+    tmp_path: Path,
+) -> None:
+    """GCM's authentication tag is what makes 'decrypts cleanly' a genuine
+    integrity claim, not merely a confidentiality one — flip a byte and this
+    must refuse to produce any plaintext at all, not a corrupted one."""
+    store = EvidenceStore(tmp_path, key=_KEY)
+    digest = store.write("run-enc-6", _bundle("tamper target"))
+    path = tmp_path / "run-enc-6" / "bundles" / f"{digest.removeprefix('sha256:')}.json"
+
+    on_disk = bytearray(path.read_bytes())
+    on_disk[-1] ^= 0xFF
+    path.write_bytes(bytes(on_disk))
+
+    with pytest.raises(EvidenceError, match="could not decrypt"):
+        store.read("run-enc-6", digest)
+
+
+def test_encrypting_the_same_payload_twice_produces_different_ciphertext(
+    tmp_path: Path,
+) -> None:
+    """A fresh nonce per write — reusing one under the same key would leak
+    whether two bundles share content by making their ciphertexts match."""
+    from app.core.evidence.crypto import encrypt
+
+    payload = b"identical plaintext"
+    assert encrypt(payload, key=_KEY) != encrypt(payload, key=_KEY)

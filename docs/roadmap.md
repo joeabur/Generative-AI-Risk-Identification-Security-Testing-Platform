@@ -774,12 +774,13 @@ Decisions worth stating:
 
 Deferred out of Phase 8, with reasons:
 
-- **No encryption at rest.** §13 makes it optional, and a half-built
-  implementation with an undocumented key model would be worse than none — an
-  operator would believe the evidence was protected while the key sat beside
-  it. What protects a bundle today is filesystem permissions and the
-  redaction that ran before the write. `.env.example` and the compose volume
-  say so where an operator will read it.
+- **No encryption at rest, at the time.** §13 makes it optional, and a
+  half-built implementation with an undocumented key model would have been
+  worse than none — an operator would believe the evidence was protected
+  while the key sat beside it. Closed later (see "Evidence encryption at
+  rest" further down this file) with exactly the key model this deferral
+  was waiting to have decided: one static key from an environment variable,
+  the same trade this project already made for every other secret it holds.
 - **Evidence is only produced by the AI engine.** The AI driver has the whole
   exchange, so its findings carry bundles. The API and AppSec engines record
   their evidence as text on the result; giving them structured bundles needs
@@ -1918,9 +1919,10 @@ produce, so the two halves cannot drift apart.
 - **No release cut**, so `release.yml` and `sbom.yml` have never run end to end.
 - **CycloneDX 1.7** once the tooling supports it.
 - **No auth rate limiting, no CSRF token, no server-side JWT revocation, no
-  evidence encryption at rest.** All four remain in the security review's gap
-  table. Rate limiting is still the one most likely to matter first in a real
-  deployment.
+  evidence encryption at rest.** All four were open when this line was
+  first written; all four are now addressed in the "Post-Phase-18" sections
+  below, in the order they were tackled. Evidence encryption stays opt-in
+  by design, not a default — see its own section for why.
 
 ## Post-Phase-18: authentication rate limiting
 
@@ -2282,3 +2284,80 @@ rather than taken on the agent's word alone.
   cost of calling it repeatedly is negligible — unlike `/auth/register` and
   `/auth/login`, which do real work per attempt and are exactly why that
   budget exists.
+
+## Post-Phase-18: evidence encryption at rest, made opt-in
+
+The last of the four gaps this roadmap tracked since Phase 12. §13 makes
+encryption at rest for evidence bundles optional, and the earlier deferral
+for it was explicit about why nothing existed yet: "a half-built
+implementation with an undocumented key model would be worse than none — an
+operator would believe the evidence was protected when the key sat beside
+it." Closing it meant deciding that key model, not just writing the crypto.
+
+### The key model is the same trade this project already made, not a new one
+
+`AEGIS_EVIDENCE_ENCRYPTION_KEY`, read the same way `JWT_SECRET` and
+`AEGIS_CSRF_SECRET` already are: one static value from an environment
+variable, `app/core/config.py`. No rotation, no per-tenant key, no KMS
+integration, no tool to re-encrypt bundles already on disk from before the
+key was set. This is stated as plainly in `app/core/evidence/crypto.py`'s
+own docstring as the absence it replaces was stated in
+`app/core/evidence/store.py`'s — the goal was never "encryption", it was "an
+honestly-scoped answer to what protects a bundle", and a single env-var key
+is exactly as honest a scope as this platform's every other secret already
+gets.
+
+**This is a deliberate departure from `docs/BUILD_SPEC.md` §13's own
+illustrative text**, which describes "optional encryption-at-rest using a
+*run key* (age/libsodium)" — a distinct key per run rather than one static
+key for the whole deployment. A per-run key needs somewhere to keep each
+one; unless that is itself wrapped by a master key (envelope encryption),
+storing it anywhere reachable is exactly the "operator believes it is
+protected while the key sits beside it" failure the original deferral
+existed to avoid, and envelope encryption trades that for a second problem
+— a wrapping key with its own rotation and compromise story — that this
+platform has never needed for any other secret. §13 itself says "document
+the key-management model honestly" rather than mandating the specific
+run-key shape it illustrates with, so a single static key, documented as
+exactly that, is read here as satisfying the instruction rather than
+missing it.
+
+Unset — every existing deployment, unchanged — a bundle is written exactly
+as it always was. Set, `app/core/evidence/crypto.py` (AES-256-GCM, a fresh
+nonce per bundle, `nonce || ciphertext_with_tag` on disk) encrypts before
+`EvidenceStore.write` touches the filesystem and decrypts transparently in
+`read`; `verify` decrypts before re-hashing, since the manifest's digest was
+always computed over plaintext content and has to stay that way regardless
+of what protects the bytes on disk — content addressing and the hash chain
+are about the observation, not the storage format.
+
+### A misconfigured key fails at startup, not mid-run
+
+`Settings.model_post_init` reads `evidence_encryption_key_bytes` for its
+side effect: a key that is not valid base64, or does not decode to exactly
+32 bytes, raises `ValueError` at process startup. The alternative —
+validating lazily, on the first write — would mean a run collects probe
+observations for however long it takes to reach one with a bundle, then
+loses that observation to a typo made hours earlier. `tests/test_config.py`
+covers both failure modes directly against `Settings`, not through
+`get_settings()`'s cache, since these tests are specifically about
+construction succeeding or failing.
+
+### Proven with the same "break it and watch the test fail" discipline
+
+`tests/test_evidence.py` adds: an unconfigured store still writes plaintext
+(the unchanged default); a configured one never writes the plaintext bytes
+to disk (checked by asserting the plaintext content string is *absent* from
+the file, not merely that some encryption ran); reading a configured store
+back returns exactly the original plaintext; verification still passes
+through encryption; the wrong key cannot read a bundle written under the
+right one, at the level a caller actually hits (`read`, not the primitive);
+`verify` reports a wrong-key bundle as a listed problem rather than raising
+out of the whole method; a single flipped byte in an encrypted bundle fails
+to decrypt entirely rather than producing corrupted plaintext (GCM's
+authentication tag is what makes "decrypts cleanly" an integrity claim, not
+only a confidentiality one); and two writes of identical plaintext never
+produce identical ciphertext, which is what a fresh nonce per write buys.
+Verified the write-path test fails when encryption is skipped, by
+temporarily reverting the `write()` change and confirming three tests catch
+it, before restoring the fix.

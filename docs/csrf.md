@@ -112,3 +112,29 @@ Stated rather than implied:
 - **The dashboard has no write actions.** It is read-only because none are
   built, not because of CSRF any more. That reason was removed from the
   disabled controls when it stopped being true.
+
+## Regression found and fixed: the browser client never sent the header
+
+When middleware enforcement shipped, `frontend/lib/api-client.ts`'s
+`clientApiFetch` (the fetch helper every Client Component uses) was never
+updated to read the `aegis_csrf` cookie and echo it back as `X-CSRF-Token`.
+Every cookie-authenticated write from the browser — starting with
+`POST /organizations` from the "Create Organization" form — has been
+silently returning 403 since that middleware landed. No test caught it
+because the existing form-level tests mock `clientApiFetch` outright and
+never exercise its real header logic.
+
+Fixed by teaching `clientApiFetch` to read `document.cookie` for
+`aegis_csrf` and set the header on any non-safe method that doesn't already
+carry one, matching `SAFE_METHODS` in `app/core/csrf/enforce.py` exactly.
+`frontend/lib/api-server.ts` (the Server Component / Route Handler fetch
+helper) got the same treatment pre-emptively, even though its only two
+current callers are GETs, so the same gap can't reopen the moment a
+server-side mutation is added.
+
+Covered by `frontend/lib/__tests__/api-client.test.ts`, which exercises the
+real `clientApiFetch` (not a mock) against a stubbed `fetch` and a seeded
+`document.cookie`: it asserts the header is attached for unsafe methods with
+a cookie present, omitted for safe methods and for the pre-session case, and
+never overridden when a caller already supplies one. Verified to fail
+(header missing) with the fix reverted and pass with it restored.

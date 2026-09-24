@@ -475,3 +475,24 @@ during development. The fix is a dedicated microsecond-precision claim used
 only for this comparison, required the same way `jti` is — a token forged
 without it is refused, not silently exempted from revocation.
 
+## Frontend CSRF regression, found and fixed (§18)
+
+The backend's CSRF middleware (§ CSRF protection above) went live requiring
+`X-CSRF-Token` on unsafe, cookie-authenticated requests, but the browser
+fetch helper every Client Component uses — `clientApiFetch` in
+`frontend/lib/api-client.ts` — was never updated to read the `aegis_csrf`
+cookie and send it. Every cookie-authenticated write from the browser has
+been silently 403ing since that middleware shipped; `POST /organizations`
+is the first one a user would hit. This was a genuine, previously-unnoticed
+regression: the existing frontend tests mock `clientApiFetch` outright and
+never touched its real header logic, so nothing caught it.
+
+Fixed by attaching the header in `clientApiFetch` for any request whose
+method isn't in the same safe-method set the backend exempts, and applying
+the identical treatment pre-emptively to `serverApiFetch`
+(`frontend/lib/api-server.ts`) even though its current callers are all
+GETs. Proven with `frontend/lib/__tests__/api-client.test.ts`, which drives
+the real function against a stubbed `fetch` and a seeded `document.cookie`
+rather than a mock, and was confirmed to fail with the fix reverted before
+being confirmed to pass with it restored.
+

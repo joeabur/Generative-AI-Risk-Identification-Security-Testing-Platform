@@ -2144,3 +2144,50 @@ useful confirmation that the per-token key is truly load-bearing).
 - **No password-change flow exists yet** to hang an automatic "revoke
   everything on password change" rule from. `/auth/logout-all` is the
   deliberate stand-in.
+
+## Post-Phase-18: a frontend regression from the CSRF middleware, found and fixed
+
+### The client half of the CSRF contract was never written
+
+`app/core/csrf/enforce.py` shipped requiring `X-CSRF-Token` on every unsafe,
+cookie-authenticated request, but `frontend/lib/api-client.ts`'s
+`clientApiFetch` — the fetch helper every Client Component uses — was never
+updated to read the `aegis_csrf` cookie and attach that header. Every
+cookie-authenticated browser write has been returning 403 since CSRF
+enforcement landed; `POST /organizations` (the "Create Organization" form)
+is the first one anyone would hit. This was a real, previously-undetected
+regression, not a documented residual: nothing in `docs/csrf.md` claimed
+this path worked, and nothing claimed it didn't either — it was simply
+untested at the level that would have caught it, because
+`components/auth/__tests__/login-form.test.tsx`-style tests mock
+`clientApiFetch` itself rather than exercising its header logic.
+
+Fixed in `clientApiFetch` and, pre-emptively, in `serverApiFetch`
+(`frontend/lib/api-server.ts`) even though its only two current callers are
+both GETs — otherwise the first server-side mutation added later hits the
+identical gap with nothing here to catch it in advance. Both read the
+`SAFE_METHODS` boundary from the same set of methods the backend exempts,
+kept in a comment next to each rather than imported, since the two live in
+different language runtimes.
+
+While writing the fix, an earlier draft of `serverApiFetch` also forwarded
+the CSRF cookie as a second, separate `Cookie:` header entry, with a comment
+claiming the backend compares two cookies (a plain double-submit check).
+Re-reading `enforce.py::check` disproved that: it only ever reads the
+*session* cookie to recompute the expected signature, and compares that
+against whatever arrives in the header — it never looks up `aegis_csrf` by
+name during verification. The extra forwarding was dead code justified by a
+false claim about the server it was talking to; removed, and the comment
+rewritten to describe the real mechanism.
+
+### Proven with a test that exercises the real function, not a mock
+
+`frontend/lib/__tests__/api-client.test.ts` calls the actual
+`clientApiFetch` against a stubbed global `fetch` and a seeded
+`document.cookie`, and asserts: the header is attached on an unsafe method
+when the cookie is present; omitted on a safe method even with the cookie
+present; omitted on an unsafe method with no cookie yet (the pre-session
+case); and never overridden when a caller already supplies the header.
+Confirmed the first case fails with the fix reverted (header absent) and
+passes with it restored — the same "break it, watch the test catch it, put
+it back" discipline used for every other control in this project.

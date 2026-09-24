@@ -4,16 +4,18 @@ Jinja2 templates and HTMX, served by the same FastAPI application as the API.
 Three properties are deliberate, and each is asserted in `tests/test_web.py`
 rather than left as a claim in a docstring.
 
-**Read-only, and that is a security decision rather than a limitation.** The
-dashboard authenticates by session cookie, and this platform has no CSRF token
-(`docs/security-review.md` lists that gap openly). A cookie-authenticated
-endpoint that changed state would therefore be forgeable from any page the
-operator happened to have open. So every route here is a `GET`, and a test
-walks the route table to prove it: a mutating route cannot be added without
-that test failing. Actions that *would* change state are rendered as disabled
-controls carrying the reason and the API call that does the job — which is the
-§27 rule ("every visible action works or is disabled with a reason") satisfied
-honestly rather than by hiding the buttons.
+**Read-only, and that is a scope decision rather than a security one now.**
+CSRF protection exists (`docs/csrf.md`) and would cover a write handler here
+the same way it covers the API's, so the reason no write handler is built
+is simply that none has been — see `_CSRF_REASON` below, which is what a
+disabled control's own explanation says, rather than leaving this docstring
+to make a claim the UI itself no longer makes. Every route here is a `GET`
+regardless, and a test walks the route table to prove it: a mutating route
+cannot be added without that test failing. Actions that *would* change
+state are rendered as disabled controls carrying the reason and the API
+call that does the job — the §27 rule ("every visible action works or is
+disabled with a reason") satisfied honestly rather than by hiding the
+buttons.
 
 **Every number comes from a query.** The handlers below pass nothing to a
 template but what `app.web.queries` returned. §27's definition of done says

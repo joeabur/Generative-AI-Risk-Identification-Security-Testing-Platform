@@ -17,29 +17,30 @@ It authenticates with the session cookie the API's `/auth/login` and
 `/auth/register` set. There is no sign-in form: a second credential path is a
 second thing to get wrong.
 
-## It is read-only, and that is a security decision
+## It is read-only, and that is a scope decision now, not a security one
 
 Every route under `/app` is a `GET`. Not "mostly", and not "for now" —
 `tests/test_web.py::test_every_dashboard_route_is_a_get` walks the route table
 and fails if a non-GET route is ever added.
 
-The reason is in `docs/security-review.md`: this platform has **no CSRF token**.
-A page that authenticates by cookie and changes state would be forgeable from
-any other page the operator had open. Rather than ship that and hope
-`SameSite=Lax` holds, the dashboard shows the action, disables it, and says
-both why it is disabled and which API call performs it:
+CSRF protection exists now (`docs/csrf.md`) and would cover a dashboard write
+route the same way it covers the API's. No write route is built here anyway,
+so the dashboard still shows the action, disables it, and says both why and
+which API call performs it instead:
 
 > **Start a run** *(disabled)*
-> The dashboard is read-only: it authenticates by session cookie and this
-> platform has no CSRF token, so a state-changing page route would be forgeable.
-> Use the API or the CLI. `POST /api/v1/organizations/{organization_id}/runs`
+> The dashboard is read-only: write handlers are not built. CSRF protection
+> now exists (`docs/csrf.md`), so this is a scope decision rather than a
+> security constraint — the reason it was one has been removed. Use the API
+> or the CLI. `POST /api/v1/organizations/{organization_id}/runs`
 
 That is §27's *"every visible action works or is disabled with a reason"* met
 honestly. A greyed-out button with no explanation is a dead end; so is hiding
 the button and leaving the operator to wonder.
 
-If CSRF protection is added later, these routes become the obvious place to put
-the actions back — and the test above is what will make that a deliberate change.
+These routes are the obvious place to put a write handler if one is ever
+built — and the route-table test above is what will make that a deliberate
+change rather than an accident.
 
 ## Every number is a query
 

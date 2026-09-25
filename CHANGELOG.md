@@ -6,6 +6,28 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Postgres Row-Level Security as a second, independent tenant-isolation
+  boundary behind the application's own `organization_id` filters, on the 14
+  tenant-scoped tables (`app/db/tenant_context.py`, migration `b2e6f4a91c7d`).
+  Defense in depth: a query that forgot its `organization_id` filter now fails
+  closed (an empty result) rather than crossing tenants. Requires the runtime
+  database role to be a non-superuser — see `docs/deployment.md`'s Database
+  section.
+- A cumulative, platform-wide daily cap on AI provider spend
+  (`app/core/assistant/spend_cap.py`), on top of the existing $5.00
+  per-interaction budget, plus real per-call cost estimation
+  (`app/core/assistant/pricing.py`) — the per-interaction budget's cost
+  dimension previously never actually moved, because every call passed
+  `estimated_cost_usd=0.0`.
+- Dark/light mode toggle, in both the Jinja2 dashboard and the Next.js
+  frontend, remembered per browser via `localStorage` and applied before
+  first paint to avoid a flash of the wrong theme.
+- Responsive layout pass on the Jinja2 dashboard: header, cards, and tables
+  now reflow at phone width; the Next.js frontend's existing Tailwind
+  breakpoints were left as-is and its top nav made wrap-safe.
+
 ### Fixed
 
 - `aegis-ai target roe|adapter|code|runtime-protection` — a full audit pass

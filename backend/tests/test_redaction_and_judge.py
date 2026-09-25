@@ -14,7 +14,7 @@ from app.core.redaction.secrets import MASK, find_secrets, redact, shannon_entro
 SECRETS = [
     "AKIAIOSFODNN7EXAMPLE",
     "ghp_abcdefghijklmnopqrstuvwxyz0123456789",
-    "xoxb-1234567890-abcdefghijkl",
+    "xoxb-1234567890-abcdefghijkl",  # pragma: allowlist secret
     "sk-proj-abcdefghijklmnopqrstuvwxyz12",
     "-----BEGIN RSA PRIVATE KEY-----",  # pragma: allowlist secret
 ]

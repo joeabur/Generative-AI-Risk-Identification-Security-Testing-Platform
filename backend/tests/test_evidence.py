@@ -40,7 +40,7 @@ SECRETS = [
     "sk-proj-" + "B" * 32,
     "AIza" + "c" * 35,
     "sk_live_" + "d" * 24,
-    "xoxb-1234567890-abcdefghij",
+    "xoxb-1234567890-abcdefghij",  # pragma: allowlist secret
     "postgresql://aegis:sup3rs3cretpassw0rd@db.internal:5432/app",
     # pragma: allowlist nextline secret
     "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1g",

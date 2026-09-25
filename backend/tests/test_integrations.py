@@ -57,6 +57,7 @@ from app.core.scope.transport import Observation
 from app.models.integration import DeliveryStatus, NotificationChannel
 
 ORG = uuid.UUID("11111111-1111-1111-1111-111111111111")
+# pragma: allowlist nextline secret
 SLACK_URL = "https://hooks.slack.com/services/T000/B000/xxxxxxxxxxxxxxxxxxxxxxxx"
 
 

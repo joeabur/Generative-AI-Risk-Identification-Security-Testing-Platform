@@ -20,6 +20,7 @@ from app.core.csrf.enforce import HEADER_NAME
 from app.models.audit import AuditEvent
 from app.models.integration import NotificationChannel
 
+# pragma: allowlist nextline secret
 SLACK_URL = "https://hooks.slack.com/services/T111/B222/zzzzzzzzzzzzzzzzzzzzzzzz"
 SLACK_ENV = "AEGIS_TEST_SLACK_WEBHOOK"
 

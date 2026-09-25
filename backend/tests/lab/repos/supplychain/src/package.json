@@ -1,0 +1,14 @@
+{
+  "name": "aegis-supplychain-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "postinstall": "node ./scripts/noop.js"
+  },
+  "dependencies": {
+    "1odash": "^4.17.21",
+    "exprses": "^4.18.2",
+    "some-internal-lib": "*"
+  }
+}

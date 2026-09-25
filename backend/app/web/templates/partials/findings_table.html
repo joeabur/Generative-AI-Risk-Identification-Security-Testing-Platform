@@ -1,0 +1,49 @@
+<div id="findings-table" class="panel">
+{% if findings %}
+  <table>
+    <thead>
+      <tr><th>Severity</th><th>Risk</th><th>Title</th><th>Surface</th>
+          <th>Status</th><th>Seen</th><th>Evidence</th></tr>
+    </thead>
+    <tbody>
+    {% for finding in findings %}
+      <tr>
+        <td class="sev sev-{{ finding.severity.value|upper }}">{{ finding.severity.value|capitalize }}</td>
+        <td class="num">{{ "%.1f"|format(finding.risk_score) }}</td>
+        <td>{{ finding.title }}</td>
+        <td><code>{{ finding.surface|truncate(60, true) }}</code></td>
+        <td><span class="pill">{{ finding.status.value }}</span></td>
+        <td class="num">{{ finding.times_seen }}&times;</td>
+        <td>
+          {%- if finding.evidence_ref -%}
+            <code>{{ finding.evidence_ref[:19] }}…</code>
+          {%- else -%}
+            <span class="unknown">none</span>
+          {%- endif -%}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <p class="empty">No open findings match.</p>
+{% endif %}
+{% if has_prev or has_more %}
+  {% set base = "/app/organizations/" ~ organization_id ~ "/findings" %}
+  {% set qs = "?severity=" ~ severity if severity else "" %}
+  {% set sep = "&" if severity else "?" %}
+  <nav class="pager">
+    {% if has_prev %}
+    <a href="{{ base }}{{ qs }}{{ sep }}page={{ page - 1 }}"
+       hx-get="{{ base }}{{ qs }}{{ sep }}page={{ page - 1 }}"
+       hx-target="#findings-table">&larr; Previous</a>
+    {% endif %}
+    <span class="page-num">Page {{ page }}</span>
+    {% if has_more %}
+    <a href="{{ base }}{{ qs }}{{ sep }}page={{ page + 1 }}"
+       hx-get="{{ base }}{{ qs }}{{ sep }}page={{ page + 1 }}"
+       hx-target="#findings-table">Next &rarr;</a>
+    {% endif %}
+  </nav>
+{% endif %}
+</div>

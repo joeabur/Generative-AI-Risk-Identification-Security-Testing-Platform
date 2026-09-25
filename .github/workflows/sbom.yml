@@ -1,0 +1,83 @@
+# CycloneDX SBOM (docs/BUILD_SPEC.md §23).
+#
+# Generated from the installed environment rather than the manifest, for the
+# same reason pip-audit runs against the installed set: an SBOM that lists
+# what was declared instead of what shipped describes a build nobody ran.
+name: sbom
+
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        # The default checkout ref on a pull_request event is GitHub's synthetic
+        # merge-with-base commit, not the PR's own head — which can differ from
+        # either side and makes a check red or green for a reason nobody pushed.
+        # Pinned so this always tests what is actually on the branch.
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install the backend and the SBOM generator
+        working-directory: backend
+        run: |
+          pip install -e ".[dev,appsec]"
+          pip install cyclonedx-bom
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Generate SBOMs
+        run: |
+          mkdir -p sbom
+          cyclonedx-py environment --output-format json --outfile sbom/backend.cdx.json
+          npx --yes @cyclonedx/cyclonedx-npm@latest \
+            --output-format json \
+            --output-file sbom/frontend.cdx.json \
+            frontend/package-lock.json
+
+      - name: Generate the ML-BOM
+        working-directory: backend
+        # A SEPARATE, labelled document — §27's addendum forbids merging the
+        # two into one undifferentiated bill of materials. It is also mostly
+        # empty on purpose: this release ships no model, and an inventory that
+        # says so is worth more than one padded to look complete.
+        run: python -m scripts.mlbom --out ../sbom/mlbom.cdx.json
+
+      - name: Show what each document claims
+        run: |
+          set -euo pipefail
+          for file in sbom/*.json; do
+            echo "== $file"
+            python -c "import json,sys; d=json.load(open(sys.argv[1])); \
+              print('  spec', d.get('specVersion'), \
+                    'components', len(d.get('components') or []), \
+                    'services', len(d.get('services') or []))" "$file"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: sbom/
+          if-no-files-found: error

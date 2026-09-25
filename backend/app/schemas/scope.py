@@ -18,6 +18,7 @@ class RulesOfEngagementRead(BaseModel):
     forbidden_headers: list[str]
     budgets: dict[str, Any]
     safe_mode: bool
+    allow_state_mutation: bool
     blackout_windows: list[dict[str, Any]]
 
 

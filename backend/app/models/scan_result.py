@@ -20,6 +20,7 @@ from app.core.probes.models import Category, Confidence, Severity
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
+    from app.core.probes.models import ScanResult
     from app.models.assessment_run import AssessmentRun
 
 
@@ -54,5 +55,44 @@ class ScanResultRecord(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     probe_version: Mapped[str] = mapped_column(String(50), nullable=False)
     frameworks: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
     reproduction: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    # Set by engines that can compute a stable identity (rule + path + code
+    # span). Nullable because a dynamic probe's fingerprint is the findings
+    # service's job, and a guessed one would be worse than none.
+    fingerprint: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
+    # Attack and control rates with their intervals, where the probe
+    # measured them. Null for a deterministic engine's result, which is not
+    # the same as a measured zero.
+    measurement: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    stability: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # The digest of this result's evidence bundle in the evidence store
+    # (§13). Nullable: a design-review or "not tested" result has no
+    # exchange behind it.
+    evidence_ref: Mapped[str | None] = mapped_column(String(80), nullable=True)
 
     run: Mapped["AssessmentRun"] = relationship(back_populates="scan_results")
+
+    def to_scan_result(self) -> "ScanResult":
+        """Back to the wire shape, so the findings service works on the same
+        type the probes emit rather than a second, drifting copy."""
+        from app.core.probes.models import ScanResult
+
+        return ScanResult(
+            id=self.result_code,
+            title=self.title,
+            category=self.category,
+            severity=self.severity,
+            confidence=self.confidence,
+            endpoint=self.endpoint,
+            description=self.description,
+            evidence=self.evidence,
+            impact=self.impact,
+            remediation=self.remediation,
+            probe_id=self.probe_id,
+            probe_version=self.probe_version,
+            frameworks=tuple(str(item) for item in (self.frameworks or [])),
+            reproduction=tuple(str(item) for item in (self.reproduction or [])),
+            fingerprint=self.fingerprint,
+            measurement=self.measurement,
+            stability=self.stability,
+            evidence_ref=self.evidence_ref,
+        )

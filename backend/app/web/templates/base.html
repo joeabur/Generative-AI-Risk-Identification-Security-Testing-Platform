@@ -1,0 +1,109 @@
+{#
+  The one layout. Everything the dashboard renders extends this.
+
+  No build step, no bundler, no node_modules: the stylesheet is inline and the
+  only script is HTMX, served from this application's own static directory when
+  an operator has vendored it. There is deliberately no CDN tag: a security tool
+  that fetched its JavaScript from a third party on the page where findings are
+  read would be asking its operator to trust that third party with the findings.
+
+  **The dashboard does not need HTMX to work.** Every page is a complete
+  server-rendered document reachable by an ordinary link, and the `hx-*`
+  attributes below are progressive enhancement over that. With no script the
+  links navigate; with HTMX present the same handler returns just the fragment.
+  `docs/dashboard.md` says how to vendor it, and why it is not committed here.
+#}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Aegis AI Security{% endblock %}</title>
+{% if htmx_available %}<script src="/app/static/htmx.min.js" defer></script>{% endif %}
+<style>
+:root {
+  --bg: #0f1117; --panel: #171a23; --line: #262b38; --text: #e6e8ee;
+  --muted: #9aa3b5; --accent: #5b8cff;
+  --critical: #ff5470; --high: #ff9f45; --medium: #ffd93d;
+  --low: #6ec9a8; --informational: #7f8aa3;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f7f8fa; --panel: #ffffff; --line: #e2e5ec; --text: #16181d;
+    --muted: #5d6675; --accent: #2b5fd9;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+header {
+  display: flex; flex-wrap: wrap; gap: 16px; align-items: baseline;
+  padding: 14px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+}
+header .brand { font-weight: 650; letter-spacing: -0.01em; }
+header nav { display: flex; flex-wrap: wrap; gap: 14px; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+main { max-width: 1180px; margin: 0 auto; padding: 24px 16px 64px; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+h2 { font-size: 16px; margin: 28px 0 10px; }
+.sub { color: var(--muted); margin: 0 0 20px; font-size: 13px; }
+.cards { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+.card {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; padding: 14px;
+}
+.card .n { font-size: 26px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.card .k { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.card .note { color: var(--muted); font-size: 12px; margin-top: 4px; }
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+td.num { font-variant-numeric: tabular-nums; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; }
+.sev { font-weight: 600; }
+.sev-CRITICAL { color: var(--critical); }
+.sev-HIGH { color: var(--high); }
+.sev-MEDIUM { color: var(--medium); }
+.sev-LOW { color: var(--low); }
+.sev-INFORMATIONAL { color: var(--informational); }
+.pill {
+  display: inline-block; padding: 1px 8px; border-radius: 999px;
+  border: 1px solid var(--line); font-size: 12px; color: var(--muted);
+}
+.empty { color: var(--muted); padding: 16px; font-size: 14px; }
+.unknown { color: var(--muted); font-style: italic; }
+button[disabled] {
+  background: transparent; color: var(--muted); border: 1px dashed var(--line);
+  border-radius: 6px; padding: 5px 10px; font: inherit; font-size: 13px; cursor: not-allowed;
+}
+.why { color: var(--muted); font-size: 12px; margin: 4px 0 0; max-width: 62ch; }
+.why code { font-size: 11.5px; }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.filters a.on { font-weight: 650; text-decoration: underline; }
+.pager { display: flex; align-items: center; gap: 12px; margin-top: 12px; font-size: 13px; }
+.pager .page-num { color: var(--muted); }
+@media (max-width: 640px) { main { padding: 16px; } }
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">Aegis AI Security</span>
+  {% if organization_id %}
+  <nav>
+    <a href="/app/organizations/{{ organization_id }}">Overview</a>
+    <a href="/app/organizations/{{ organization_id }}/findings">Findings</a>
+    <a href="/app/organizations/{{ organization_id }}/runs">Runs</a>
+    <a href="/app/organizations/{{ organization_id }}/workflows">Workflows</a>
+    <a href="/app/organizations/{{ organization_id }}/targets">Targets</a>
+  </nav>
+  {% endif %}
+  {% if membership %}<span class="pill">{{ membership.role.value }}</span>{% endif %}
+</header>
+<main>
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>

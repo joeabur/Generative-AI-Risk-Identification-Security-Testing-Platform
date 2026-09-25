@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Findings — Aegis AI Security{% endblock %}
+{% block content %}
+<h1>Open findings</h1>
+<p class="sub">Ordered by risk score, worst first. Closed, remediated,
+   false-positive and accepted-risk findings are not listed.</p>
+<div class="filters">
+  <a href="/app/organizations/{{ organization_id }}/findings"
+     hx-get="/app/organizations/{{ organization_id }}/findings"
+     hx-target="#findings-table"
+     class="{{ 'on' if not severity }}">All</a>
+  {% for name in severity_order %}
+  <a href="/app/organizations/{{ organization_id }}/findings?severity={{ name }}"
+     hx-get="/app/organizations/{{ organization_id }}/findings?severity={{ name }}"
+     hx-target="#findings-table"
+     class="{{ 'on' if severity == name }}">{{ name|capitalize }}</a>
+  {% endfor %}
+</div>
+{% include "partials/findings_table.html" %}
+<h2>Changing a finding's status</h2>
+<button disabled>{{ actions.change_status.label }}</button>
+<p class="why">{{ actions.change_status.reason }}
+   <code>{{ actions.change_status.how }}</code></p>
+{% endblock %}

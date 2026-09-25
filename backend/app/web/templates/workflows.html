@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Workflows — Aegis AI Security{% endblock %}
+{% block content %}
+<h1>Workflows</h1>
+<p class="sub">A workflow is a trigger, a derived plan, and a gate decision.
+   The plan digest is what makes two runs comparable.</p>
+{% if workflows %}
+<div class="panel">
+  <table>
+    <thead><tr><th>Name</th><th>Target</th><th>Trigger</th><th>Enabled</th><th>Gate</th></tr></thead>
+    <tbody>
+    {% for workflow in workflows %}
+      <tr>
+        <td>{{ workflow.name }}</td>
+        <td>{{ targets.get(workflow.target_id, "—") }}</td>
+        <td>{{ workflow.trigger_kind }}</td>
+        <td>{{ "yes" if workflow.enabled else "no" }}</td>
+        <td>{{ "custom" if workflow.gate_config else "default" }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<p class="empty">No workflows defined.</p>
+{% endif %}
+<h2>Recent workflow runs</h2>
+{% include "partials/workflow_runs_table.html" %}
+<h2>Running a workflow</h2>
+<button disabled>{{ actions.run_workflow.label }}</button>
+<p class="why">{{ actions.run_workflow.reason }} <code>{{ actions.run_workflow.how }}</code></p>
+{% endblock %}

@@ -2,9 +2,11 @@
 
 **Generative AI Risk Identification & Security Testing Platform**
 
-**Spec version:** 3.0 (unified)
+**Spec version:** 3.1 (unified)
 **Written:** 2026-09-18
-**Supersedes:** "Build Specification v2.0" (CLI/MVP-first spec) and "Master Build Prompt" (full-stack web-app spec), which are merged and reconciled below. Where the two source documents conflicted, the conflict and resolution are recorded explicitly in §4.4 and in `docs/decisions/`.
+**Supersedes:** "Build Specification v2.0" (CLI/MVP-first spec) and "Master Build Prompt" (full-stack web-app spec), merged and reconciled in v3.0. v3.1 folds in two later documents: the **AppSec Addendum v2.1** (SAST/DAST/SCA/Secrets/RASP + AI-assistant layer) and the **Implementation Specification** (simplicity constraint, MVP engine set, AI as a first-class platform layer). Where any source documents conflicted, the conflict and its resolution are recorded explicitly in §4.4, §4.5 and in `docs/decisions/`.
+
+**Precedence, highest first:** §2 (safety, legality, payload policy) and §6 (scope & authorization engine) — these are never relaxed by any later document, and any apparent conflict with them is a defect in the later document; then the Implementation Specification (latest, and explicitly takes precedence for the changes it names); then the AppSec Addendum v2.1; then this document's v3.0 body.
 
 ---
 
@@ -225,6 +227,26 @@ Nothing in this reconciliation weakens §2 (safety/payload policy) or §6 (scope
 
 ---
 
+### 4.5 Reconciling the AppSec Addendum and the Implementation Specification — decisions
+
+Three documents now govern this build, written at different times with
+different emphases. Where they disagree, this table is the resolution. Each
+row states which document wins and why, so that a future reader can tell a
+decision from an oversight.
+
+| # | Conflict | Resolution | Reasoning |
+|---|---|---|---|
+| 1 | Impl Spec §3 says avoid PostgreSQL (prefer SQLite), Redis and Celery. Phases 1–6 shipped all three. | **Keep them.** | Impl Spec §3 bans *introducing* these "unless a demonstrated requirement in the existing codebase makes them necessary", and §1 says to reuse working architecture and not rebuild functioning components. The requirements are demonstrated and tested: multi-tenant row isolation and JSON/ENUM columns (Postgres), cross-process run cancellation (Redis), and out-of-request run execution with SSE progress (Celery). Rewriting them onto SQLite would delete six phases of tested behaviour to satisfy a constraint whose own escape clause is already met. A SQLite "local profile" is tracked as a later simplification, not a rewrite. |
+| 2 | Impl Spec §3/§16 wants a Jinja2 + HTMX dashboard; Phase 1 shipped a Next.js app. | **Move to Jinja2 + HTMX.** | This is the one stack conflict where the Impl Spec plainly wins. The Next.js app is a thin auth-only scaffold (login, register, create-organization) with no dashboard built on it, so the sunk cost is small and the simplicity gain is real. The existing REST API is unchanged; the dashboard becomes a server-rendered consumer of it. |
+| 3 | Impl Spec §19 and Addendum §6.4 call the CLI `aegis`; v3.0 §20 and ADR 0003 call it `aegis-ai`. | **`aegis`**, with `aegis-ai` kept as an alias. | Two later documents agree on the shorter name, and an alias costs one line while keeping every existing document's examples working. |
+| 4 | Addendum §9 appends phases 13–15 assuming v2.0's twelve; v3.0 already has thirteen. Impl Spec §24 proposes its own ten-phase order. | **One sequence: v3.0 Phases 1–13 unchanged, then 14–18** (see §26). | Renumbering shipped phases would invalidate every commit message, roadmap entry and ADR that references them. The Impl Spec's ordering is honoured *within* the new phases: AppSec engines before assistant, RASP last and reduced. |
+| 5 | Impl Spec §5 names the MVP engine set as SAST, SCA, Secrets, **IaC**; the Addendum names SAST, DAST, SCA, Secrets, **RASP**. | **SAST, SCA, Secrets, IaC first** (Phase 14); DAST second (Phase 15). | The Impl Spec is the later document and explicitly takes precedence for the changes it names. IaC is additive and cheap; DAST is request-heavy and needs the crawler scope work, so it earns its own phase. |
+| 6 | Addendum §4.5 specifies a full RASP-effectiveness engine (its Phase 14); Impl Spec §7 says do **not** implement RASP in the MVP and keep it from complicating the architecture. | **Extension points only** (Phase 18, deferred). | The later and more restrictive document wins. The `runtime_protection` fields in §5.1 and the probe interface are enough to add the engine later without a rewrite, which is exactly what Impl Spec §7 asks for. Neither document permits shipping a RASP *agent*. |
+| 7 | Addendum §6 forbids the assistant from executing anything; Impl Spec §11 lists `EXECUTE` among the autonomy modes. | **Both, scoped:** the autonomy ladder is implemented, and `EXECUTE` may never cover authorization, scope, or any action that touches a target. | The documents are reconcilable: `EXECUTE` applies to artifact generation (reports, summaries, drafts). Anything that would consume budget, send a request, grant authorization or change a finding's real fields stays at `APPROVAL_REQUIRED` or above, per Addendum §6.3 and §28. §2 and §6 outrank both documents anyway. |
+| 8 | Addendum §4.4 promotes secret detection to a standalone engine; Phase 6 already shipped `core/redaction/secrets.py`. | **Reuse the existing detector stack**, wrapped by a new scan surface. | The detectors, digests and masking rules are already written and tested. A second implementation would be a second redaction policy, which is precisely how the §13 "never persist a secret" invariant gets broken. |
+
+---
+
 ## 5. Domain model
 
 The flat "Target" object naively conflates several distinct concerns; keep them separate (v2.0 §5), now nested under multi-tenancy (Master Prompt §7–9).
@@ -257,7 +279,16 @@ target:
   organization_id: uuid
   name: demo-ai-app
   environment: staging        # staging | test | dev | production (production requires extra confirmation)
-  kind: llm_app               # llm_app | agent | rag | api | mcp_server | model_endpoint
+  kind: llm_app               # llm_app | agent | rag | api | web_app | mcp_server | model_endpoint
+                              # web_app added by Addendum v2.1 §4.2 for classic DAST targets
+  code:                       # Addendum v2.1 §3 — present only for SAST/SCA/Secrets/IaC scanning
+    repo_ref: git+https://github.com/example/app.git#main   # or a local path under an explicit allowlist
+    languages: [python, typescript]
+    build_manifest_paths: ["pyproject.toml", "package.json"]
+  runtime_protection:         # Addendum v2.1 §3 — RASP-effectiveness assessment only (deferred, see §4.5)
+    claimed_controls: [waf, rasp_agent, input_validation_middleware]
+    vendor: string | null
+    telemetry_endpoint: keyring://...
   adapters:
     - type: http_openapi
       base_url: https://ai.example.test
@@ -548,6 +579,7 @@ mappings:
   mitre_atlas: [AML.T####]         # only if verified against the pinned release
   cwe: [CWE-####]
   nist_ai_rmf: [MEASURE 2.7]
+  nist_ssdf: [PW.4, PS.1]          # Addendum v2.1 §5 — SAST/SCA/Secrets; verify against nist.gov first
   mapping_versions: { owasp_llm_2026: "2026", mitre_atlas: "v2026.09" }
 
 evidence_ref: sha256:...
@@ -670,6 +702,29 @@ Candidates: ZAP, Nuclei, Trivy, Semgrep, Bandit, detect-secrets, Gitleaks, Presi
 - Imported findings pass through the **same** scope engine, redaction, and normalization as native ones (emit the §11.1 `ScanResult` shape), tagged `source: <tool>@<version>`.
 - If an external tool would issue a request the RoE forbids, the adapter prevents it by passing explicit scope configuration, or refuses to run the tool at all if it cannot be constrained — document any such tool and mark its adapter experimental.
 - garak and PyRIT are Python libraries and integrate in-process; promptfoo is Node and runs subprocess-only.
+
+Added by the AppSec Addendum v2.1 §8 and the Implementation Specification §5. Every
+rule above applies unchanged — verify the licence first, prefer subprocess/REST over
+vendoring, degrade gracefully when the tool is absent, and refuse or mark experimental
+any tool that cannot be constrained to the RoE:
+
+| Tool | Pillar | Integration mode |
+|---|---|---|
+| Semgrep | SAST | Subprocess; SARIF parsed and normalized |
+| Bandit | SAST (Python) | Subprocess |
+| CodeQL | SAST (optional) | Subprocess — **verify licence before enabling; mark experimental** |
+| OWASP ZAP | DAST | REST API in daemon mode, scope configured before launch |
+| Nuclei | DAST | Subprocess; template allowlist derived from the RoE |
+| pip-audit | SCA | Subprocess |
+| OSV-Scanner | SCA | Subprocess |
+| Gitleaks | Secrets | Subprocess |
+| detect-secrets | Secrets | In-process library call |
+| Checkov / tfsec | IaC | Subprocess |
+
+**The static no-ungated-HTTP check of §6.3 extends to these tools.** A subprocess that
+makes its own network calls is an outbound path like any other, so each adapter must
+launch its tool with an explicit, scope-derived allow/deny configuration, or refuse to
+launch it at all. A tool that cannot be constrained is not integrated.
 
 ---
 
@@ -976,6 +1031,11 @@ The two source phase lists are nearly isomorphic; merged into one sequence carry
 | **11. Plugins & third-party adapters** | Entry points, allowlist, 2–3 tool adapters (e.g. Semgrep, Gitleaks, detect-secrets) | Example plugin from the docs loads and runs; a test proves a plugin cannot bypass the scope engine |
 | **12. Demo lab & hardening** | Full `demo-target/` isolation, SBOM/ML-BOM, Trivy/Semgrep/Gitleaks/CodeQL/pip-audit clean, Sigstore signing, tenant-isolation and authz penetration pass against the platform itself | `lab-e2e.yml` green; SBOM attaches to release; all supply-chain CI workflows green; `docs/security-review.md` complete |
 | **13. Documentation & release** | All of §25; v0.1.0 tag | A fresh clone, following the quickstart verbatim, reaches a scanned demo lab and a downloaded report in under 10 minutes, without editing source code |
+| **14. AppSec engines (SAST/SCA/Secrets/IaC)** | `code_scope` model; Semgrep + Bandit (SAST), pip-audit + OSV (SCA), Gitleaks/detect-secrets over repos and images (Secrets), Checkov/tfsec (IaC); `nist_ssdf` mapping key | Finds every seeded flaw in an extended lab fixture (a small vulnerable repo alongside the existing app fixtures); zero findings against a hardened control repo; every finding carries a real upstream rule ID, CVE or GHSA — zero invented identifiers; `code_scope` absent or ambiguous → refuses to run |
+| **15. DAST engine** | `kind: web_app`; scope-gated crawler (each discovered URL re-checked *before* it is queued); ZAP baseline/active and Nuclei adapters under `--safe` | Crawls and tests a lab web app without ever fetching an out-of-scope URL discovered mid-crawl; destructive templates excluded unless `allow_state_mutation` is explicitly set |
+| **16. AI intelligence layer** | `AIService` provider abstraction (OpenAI-compatible + local endpoints), deterministic fake provider for CI, analysis (explanation, correlation, prioritisation) and drafting, autonomy ladder `OFF/ASSIST/RECOMMEND/APPROVAL_REQUIRED/EXECUTE` | Every test in the assistant matrix passes; with no provider configured the entire existing suite still passes unchanged; import-linter confirms nothing in `core` outside `assistant/` imports it; no path exists by which the assistant grants authorization, changes a finding's real fields, or executes a scan |
+| **17. Workflows, dashboard & CI gate** | Trigger→Plan→Actions→Evidence→Result workflow persisted in the existing database; Jinja2 + HTMX dashboard replacing the Next.js scaffold; GitHub Actions gate | A repository-change workflow runs the AppSec engines, normalises, correlates and gates deterministically; an AI recommendation cannot alter a gate decision |
+| **18. RASP extension points & hardening** | `runtime_protection` interface only, no engine; the §12 hardening pass | A RASP-effectiveness engine can be added without touching the orchestrator or the scope engine; no RASP agent ships, and a static check proves no unsafe-mode path exists for that interface |
 
 If full delivery exceeds the available budget, **ship Phases 1–8 plus 12–13 as v0.1.0** (a rigorous safety boundary, a working multi-tenant web app, working AI/API engines, and honest reports), deferring remediation/retest polish, the full CLI/CI gate, and the plugin system to v0.2.0 — recorded deliberately in `docs/roadmap.md`, never left as broken stubs.
 
@@ -1008,6 +1068,23 @@ If full delivery exceeds the available budget, **ship Phases 1–8 plus 12–13 
 [ ] All CI workflows green: Trivy, Semgrep, Gitleaks, CodeQL, pip-audit, npm audit
 [ ] SBOM (CycloneDX 1.7) generates and attaches to the release
 [ ] Release tagged, artifacts signed
+
+--- added by the AppSec Addendum and the Implementation Specification ---
+
+[ ] Every SAST/DAST/SCA/Secrets/IaC finding traceable to a real upstream rule ID,
+    CVE/GHSA or CWE — zero invented identifiers
+[ ] code_scope absent or ambiguous → SAST/SCA/Secrets-in-source refuse to run (fail closed)
+[ ] AI layer fully absent/unconfigured → 100% of the existing test suite still passes
+[ ] Every AI-drafted artifact is a draft field until a human explicitly accepts it
+[ ] The AI layer cannot grant authorization, modify scope, change a finding's real
+    fields, or auto-execute a scan — each covered by a release-blocking test
+[ ] A deterministic fake AI provider exists; no test run consumes paid API tokens
+[ ] nist_ssdf mappings verified against a pinned source, same discipline as §3.4
+[ ] Report's framework-coverage section names SAST/DAST/SCA/Secrets/IaC/RASP
+    explicitly whenever any of them were not run
+[ ] Software SBOM and ML-BOM ship as separate labelled components of one release
+    artifact, never merged into one undifferentiated bill of materials
+[ ] No RASP agent ships; the platform tests runtime protections, it does not become one
 [ ] README limitations section is real and specific; docs/comparison.md acknowledges where existing tools are better
 ```
 
@@ -1033,6 +1110,34 @@ Union of both sources' guardrails, deduplicated.
 - Do not hardcode dashboard metrics or fake scan results outside the labelled demo environment.
 - Do not leave a visible button disconnected from real functionality.
 - Do not allow real user data or arbitrary real accounts into authorization/BOLA testing — synthetic test accounts only.
+
+Added by the AppSec Addendum v2.1 §11 and the Implementation Specification §10/§23:
+
+- Do not ship a RASP agent that runs inside a customer's production process. This
+  platform tests runtime protections; it does not become one.
+- Do not let the AI layer execute a scan, grant authorization, or modify a finding's
+  real (non-draft) fields under any configuration or autonomy mode.
+- Do not add an "assistant mode", or any other flag, that routes around the
+  scope-gated transport. This is the §28 scope-bypass rule above, restated because a
+  new subsystem is the most likely place for it to be reintroduced by accident.
+- Do not treat SARIF or advisory data from a third-party tool as verified without
+  checking it carries a real rule ID, CVE or GHSA — normalization is not a licence to
+  launder an invented identifier through the pipeline.
+- Do not fold the software SBOM and the ML-BOM into one undifferentiated bill of
+  materials; keep them as clearly labelled components of one release artifact.
+- Do not let a RASP-effectiveness finding read as a vulnerability in a third-party
+  WAF/RASP vendor's product; it is a defence-in-depth gap for the assessed target.
+- Do not let AI-generated text replace, alter or stand in for evidence. Evidence is
+  what a tool observed; AI output is analysis of it, and the two are never merged.
+- Do not let an AI recommendation override, soften or silently alter a deterministic
+  security gate decision.
+- Do not expose arbitrary database access or shell execution to a model; the AI layer
+  reaches data only through explicit, reviewed application functions.
+- Do not consume paid AI provider tokens in the normal test run — CI uses the
+  deterministic fake provider.
+- Do not introduce microservices, Kubernetes, Kafka, Elasticsearch, a separate vector
+  database, an event bus, or a multi-agent framework without a demonstrated
+  requirement in this codebase (Implementation Specification §3).
 
 ---
 

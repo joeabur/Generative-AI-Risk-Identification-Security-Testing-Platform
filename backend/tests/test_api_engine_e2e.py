@@ -15,6 +15,9 @@ import pytest
 import respx
 from httpx import AsyncClient
 
+from app.core.config import get_settings
+from app.core.csrf import anon as csrf_anon
+from app.core.csrf.enforce import HEADER_NAME
 from app.core.scope.engine import ScopeEngine
 from app.core.scope.transport import GatedTransport
 from app.workers.tasks import execute_assessment_run
@@ -51,9 +54,13 @@ def _worker_transport() -> GatedTransport:
 
 
 async def _setup(client: AsyncClient, password: str) -> tuple[str, str, dict[str, str]]:
+    _register_anon_token = (await client.get("/api/v1/auth/csrf")).cookies[
+        csrf_anon.cookie_name(secure=get_settings().session_cookie_secure)
+    ]
     register = await client.post(
         "/api/v1/auth/register",
         json={"email": "labowner@example.test", "full_name": "Lab Owner", "password": password},
+        headers={HEADER_NAME: _register_anon_token},
     )
     headers = {"Authorization": f"Bearer {register.json()['access_token']}"}
     org_id = (
@@ -225,6 +232,9 @@ async def test_results_are_not_visible_to_another_organization(
         )
     ).json()["id"]
 
+    _outsider_anon_token = (await client.get("/api/v1/auth/csrf")).cookies[
+        csrf_anon.cookie_name(secure=get_settings().session_cookie_secure)
+    ]
     outsider = await client.post(
         "/api/v1/auth/register",
         json={
@@ -232,6 +242,7 @@ async def test_results_are_not_visible_to_another_organization(
             "full_name": "Outsider",
             "password": strong_password,
         },
+        headers={HEADER_NAME: _outsider_anon_token},
     )
     outsider_headers = {"Authorization": f"Bearer {outsider.json()['access_token']}"}
 

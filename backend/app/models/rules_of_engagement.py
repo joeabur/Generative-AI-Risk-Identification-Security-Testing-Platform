@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import JSON, Boolean, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.sql import expression
 
 from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
@@ -35,8 +36,23 @@ class RulesOfEngagementRecord(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     forbidden_headers: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     budgets: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     safe_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Separate from `safe_mode` on purpose: safe mode bounds how a probe
+    # behaves, this decides whether state-changing tooling may run at all.
+    # Default false, so a DAST run is non-destructive unless someone said
+    # otherwise in writing.
+    allow_state_mutation: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=expression.false()
+    )
     blackout_windows: Mapped[list[dict[str, Any]]] = mapped_column(
         JSON, nullable=False, default=list
     )
+    # Which paths inside a checkout may be read (Addendum v2.1 §3). An empty
+    # allowlist is not "everything" — the code engines refuse to run until
+    # the boundary is stated, exactly as §6.2 refuses an unresolved URL scope.
+    code_scope: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    # Kept separate from `budgets` because crawling a repository and calling a
+    # model are not the same resource: one scanner run must not be able to
+    # spend the token budget an AI assessment was granted.
+    appsec_budgets: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
     target: Mapped["Target"] = relationship(back_populates="rules_of_engagement")

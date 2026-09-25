@@ -1,0 +1,97 @@
+# A real assessment against the demo lab (docs/BUILD_SPEC.md §19, §26 Phase 12).
+#
+# The lab runs under uvicorn on loopback rather than in Docker, deliberately:
+# the test then exercises the whole path — real sockets, real DNS resolution,
+# the real scope engine — without CI needing a container runtime. Loopback is a
+# blocked range, so the target's Rules of Engagement list 127.0.0.0/8
+# explicitly. That opt-in is the same one an operator makes to scan the lab on
+# its internal Docker network, and exercising it is the point.
+#
+# `docker compose --profile demo up` remains how a person runs the lab by hand;
+# demo-target/README.md covers that.
+name: lab-e2e
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  assessment:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: aegis_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 10s
+          --health-timeout 5s --health-retries 5
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 10s
+          --health-timeout 5s --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/aegis_test
+      REDIS_URL: redis://localhost:6379/0
+      JWT_SECRET: ci-only-secret-not-used-anywhere-else
+      ENVIRONMENT: ci
+
+    steps:
+      - uses: actions/checkout@v4
+        # The default checkout ref on a pull_request event is GitHub's synthetic
+        # merge-with-base commit, not the PR's own head — which can differ from
+        # either side and makes a check red or green for a reason nobody pushed.
+        # Pinned so this always tests what is actually on the branch.
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: pip install -e ".[dev,appsec]"
+
+      - name: Migrate
+        run: alembic upgrade head
+
+      - name: Assert the lab refuses to run with a provider credential present
+        # Before the assessment, because this is the property that keeps the
+        # lab safe to run in CI at all.
+        env:
+          OPENAI_API_KEY: not-a-real-key-but-present
+        run: |
+          python - <<'PY'
+          import sys
+          sys.path.insert(0, "../demo-target")
+          from lab.isolation import LabRefusedToStart, enforce_isolation
+          try:
+              enforce_isolation()
+          except LabRefusedToStart as exc:
+              print(f"refused as required: {exc}")
+          else:
+              raise SystemExit("the lab started with a provider credential in its environment")
+          PY
+
+      - name: Real assessment against the lab
+        run: pytest -m lab_e2e -v
+
+      - name: Upload the SARIF the run produced
+        if: always()
+        run: pytest -m lab_e2e -q -k sarif --no-header

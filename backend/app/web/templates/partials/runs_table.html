@@ -1,0 +1,41 @@
+<div id="runs-table" class="panel">
+{% if runs %}
+  <table>
+    <thead>
+      <tr><th>Started</th><th>Status</th><th>Profile</th><th>Checks</th>
+          <th>Requests</th><th>Blocked</th><th>Findings</th><th>Note</th></tr>
+    </thead>
+    <tbody>
+    {% for run in runs %}
+      <tr>
+        <td class="num">{{ run.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+        <td><span class="pill">{{ run.status.value }}</span></td>
+        <td>{{ run.profile }}{% if run.safe_mode %} <span class="pill">safe mode</span>{% endif %}</td>
+        <td class="num">{{ run.checks_completed }}/{{ run.checks_total }}</td>
+        <td class="num">{{ run.requests_used }}</td>
+        <td class="num">{{ run.requests_blocked }}</td>
+        <td class="num">{{ run.findings_reported }}</td>
+        <td>{{ run.halted_reason or run.error_message or "" }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+{% else %}
+  <p class="empty">No runs yet.</p>
+{% endif %}
+{% if has_prev or has_more %}
+  <nav class="pager">
+    {% if has_prev %}
+    <a href="/app/organizations/{{ organization_id }}/runs?page={{ page - 1 }}"
+       hx-get="/app/organizations/{{ organization_id }}/runs?page={{ page - 1 }}"
+       hx-target="#runs-table">&larr; Newer</a>
+    {% endif %}
+    <span class="page-num">Page {{ page }}</span>
+    {% if has_more %}
+    <a href="/app/organizations/{{ organization_id }}/runs?page={{ page + 1 }}"
+       hx-get="/app/organizations/{{ organization_id }}/runs?page={{ page + 1 }}"
+       hx-target="#runs-table">Older &rarr;</a>
+    {% endif %}
+  </nav>
+{% endif %}
+</div>

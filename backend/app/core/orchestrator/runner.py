@@ -16,7 +16,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from app.core.orchestrator.checks import Check, CheckResult
+from app.core.orchestrator.checks import Check, CheckResult, requires_network
 from app.core.scope.context import RunContext
 from app.core.scope.transport import GatedTransport
 
@@ -72,6 +72,12 @@ async def execute_run(
             # engine, so nothing else would set a halt reason here.
             ctx.halt("kill switch tripped")
             break
+        if ctx.halted and requires_network(check):
+            # Halted means no more requests may be sent. It does not mean a
+            # check that reads files has nothing left to contribute, so those
+            # still run; an operator cancellation is handled above and stops
+            # everything.
+            continue
         await emit(
             RunEventPayload(EventKind.CHECK_STARTED, f"{check.name} started", {"check": check.id})
         )
@@ -105,9 +111,6 @@ async def execute_run(
                 {"check": check.id, "results": len(results)},
             )
         )
-
-        if ctx.halted:
-            break
 
     if ctx.halted or ctx.kill_switch.tripped:
         outcome.halted_reason = ctx.halted_reason or "stopped before completion"

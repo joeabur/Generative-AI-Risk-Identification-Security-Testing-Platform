@@ -1,0 +1,208 @@
+# Tagged release: build, sign, attest (docs/BUILD_SPEC.md §23).
+#
+# A release is the one moment this project hands somebody an artifact they will
+# run against their own systems, so it is the moment the supply-chain claims
+# have to be true rather than aspirational. Three things happen here and each
+# is a claim a consumer can check:
+#
+#   1. the full suite and the security scanners run again, on the tag itself,
+#      so a release cannot be cut from a commit that never passed;
+#   2. every artifact is signed with Sigstore (keyless, via the workflow's OIDC
+#      identity), so "this came from this repository's release workflow" is
+#      verifiable without a key anybody had to keep secret;
+#   3. SLSA provenance is attested for each artifact.
+#
+# **Signing is keyless on purpose.** A long-lived signing key held in a repository
+# secret is a credential that can be stolen and used forever; a Sigstore
+# certificate is bound to this workflow, this repository and this run, and
+# expires in minutes. `docs/releasing.md` says how to verify one.
+name: release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (must already exist)"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    # A release is cut from a green tag or not at all. Re-running rather than
+    # trusting the tag's earlier CI run: a tag can be moved.
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: aegis_test
+        options: >-
+          --health-cmd pg_isready --health-interval 10s
+          --health-timeout 5s --health-retries 5
+        ports: ["5432:5432"]
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 10s
+          --health-timeout 5s --health-retries 5
+        ports: ["6379:6379"]
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/aegis_test
+      REDIS_URL: redis://localhost:6379/0
+      ENVIRONMENT: ci
+      JWT_SECRET: ci-only-secret-not-used-anywhere-else
+    steps:
+      - uses: actions/checkout@v4
+        # The default checkout ref on a pull_request event is GitHub's synthetic
+        # merge-with-base commit, not the PR's own head — which can differ from
+        # either side and makes a check red or green for a reason nobody pushed.
+        # Pinned so this always tests what is actually on the branch.
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        working-directory: backend
+        run: pip install -e ".[dev]"
+
+      - name: Migrate
+        working-directory: backend
+        run: alembic upgrade head
+
+      - name: Lint, types, tests
+        working-directory: backend
+        run: |
+          ruff check app aegis_cli tests scripts
+          ruff format --check app aegis_cli tests scripts
+          mypy app aegis_cli
+          pytest -q
+
+      - name: Security scanners
+        working-directory: backend
+        run: |
+          bandit -r app aegis_cli -ll
+          semgrep --config app/core/appsec/sast/rules --error --metrics=off app aegis_cli
+
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Sigstore keyless signing exchanges this token for a short-lived
+      # certificate. It is the only reason this job needs any extra permission.
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.hashes.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+        # The default checkout ref on a pull_request event is GitHub's synthetic
+        # merge-with-base commit, not the PR's own head — which can differ from
+        # either side and makes a check red or green for a reason nobody pushed.
+        # Pinned so this always tests what is actually on the branch.
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Build the wheel and sdist
+        working-directory: backend
+        run: |
+          pip install build
+          python -m build --outdir ../dist
+
+      - name: Generate the SBOM for what was just built
+        working-directory: backend
+        run: |
+          pip install -e . cyclonedx-bom
+          cyclonedx-py environment --output-format json \
+            --outfile ../dist/aegis-sbom.cdx.json
+
+      - name: Generate the ML-BOM as its own document
+        working-directory: backend
+        # Separate and labelled, never merged into the software SBOM
+        # (§27 addendum). It records that this release ships no model.
+        run: |
+          python -m scripts.mlbom \
+            --version "${{ github.event.inputs.tag || github.ref_name }}" \
+            --out ../dist/aegis-mlbom.cdx.json
+
+      - name: Record the artifact digests
+        id: hashes
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+          echo "digest=$(sha256sum SHA256SUMS | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Sign every artifact with Sigstore (keyless)
+        run: |
+          set -euo pipefail
+          pip install sigstore
+          cd dist
+          for file in *; do
+            [ "$file" = "SHA256SUMS" ] && continue
+            python -m sigstore sign --overwrite "$file"
+          done
+          python -m sigstore sign --overwrite SHA256SUMS
+          ls -la
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/*"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        # The default checkout ref on a pull_request event is GitHub's synthetic
+        # merge-with-base commit, not the PR's own head — which can differ from
+        # either side and makes a check red or green for a reason nobody pushed.
+        # Pinned so this always tests what is actually on the branch.
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: dist
+
+      - name: Attach the signed artifacts to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          # `--verify-tag` so a release cannot be created for a tag that does
+          # not exist, and the notes point at how to check the signatures
+          # rather than assuming anybody knows.
+          gh release create "$TAG" dist/* \
+            --verify-tag \
+            --generate-notes \
+            --notes "Artifacts are signed with Sigstore (keyless) and carry SLSA build provenance. See \`docs/releasing.md\` for how to verify them before running anything." \
+            || gh release upload "$TAG" dist/* --clobber

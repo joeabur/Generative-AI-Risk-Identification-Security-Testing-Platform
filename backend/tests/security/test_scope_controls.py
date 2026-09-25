@@ -136,6 +136,48 @@ async def test_cloud_metadata_ip_blocked(fake_dns: FakeDnsResolver) -> None:
 
 
 @pytest.mark.parametrize(
+    "allowed_range",
+    ["169.254.169.254/32", "169.254.0.0/16", "0.0.0.0/0"],
+)
+async def test_a_cloud_metadata_ip_cannot_be_allowlisted(
+    fake_dns: FakeDnsResolver, allowed_range: str
+) -> None:
+    """The one address no configuration may permit.
+
+    Private ranges are overridable on purpose — an internal staging host and
+    the demo lab on its internal network both live there. The metadata endpoint
+    is different in kind: it is not a target, it is what hands out the
+    credentials of the machine this platform runs on. A tool that fetches an
+    arbitrary URL for its caller is SSRF-shaped by design, and this is the one
+    URL that turns that shape into a compromise of its own host — so one
+    mistyped allowlist must not be the difference.
+    """
+    engine = ScopeEngine()
+    ctx = make_context(roe=make_roe(allowed_ip_ranges=(allowed_range,)))
+    fake_dns.set("ai.example.test", ["169.254.169.254"])
+
+    decision = await _check(engine, ctx, fake_dns, url="https://ai.example.test/api")
+
+    assert decision.allowed is False
+    assert decision.rule == "blocked_ip"
+
+
+async def test_a_private_range_can_be_allowlisted_deliberately(
+    fake_dns: FakeDnsResolver,
+) -> None:
+    """The counterpart, and the reason the metadata rule has to be separate:
+    an operator scanning an internal host or the demo lab on its internal
+    Docker network is doing something legitimate."""
+    engine = ScopeEngine()
+    ctx = make_context(roe=make_roe(allowed_ip_ranges=("172.20.0.0/16",)))
+    fake_dns.set("ai.example.test", ["172.20.0.5"])
+
+    decision = await _check(engine, ctx, fake_dns, url="https://ai.example.test/api")
+
+    assert decision.allowed is True
+
+
+@pytest.mark.parametrize(
     "blocked_ip",
     ["127.0.0.1", "10.1.2.3", "172.16.0.4", "192.168.1.1", "169.254.1.1", "::1", "fd00::1"],
 )
@@ -398,10 +440,43 @@ def test_roe_fails_schema_validation_refuses_run() -> None:
 # --- fail-closed on internal error ------------------------------------------
 
 
-async def test_scope_engine_raises_internally_fails_closed() -> None:
+async def test_scope_engine_raises_internally_fails_closed(fake_dns: FakeDnsResolver) -> None:
+    """An unexpected fault anywhere in the engine blocks and halts.
+
+    The failure is injected into the budget tracker rather than into DNS: a
+    hostname that will not resolve is an ordinary outcome with its own rule
+    (below), and using it here would no longer exercise this path.
+    """
+    engine = ScopeEngine()
+    ctx = make_context()
+
+    class ExplodingBudgets:
+        def __getattr__(self, name: str) -> object:
+            raise RuntimeError("boom")
+
+    ctx.budgets = ExplodingBudgets()  # type: ignore[assignment]
+
+    decision = await engine.check(
+        ctx, dns_resolver=fake_dns, method="GET", url="https://ai.example.test/api"
+    )
+
+    assert decision.allowed is False
+    assert decision.rule == "internal_error"
+    assert decision.halted is True
+
+
+async def test_a_host_that_does_not_resolve_is_blocked_but_does_not_halt_the_run() -> None:
+    """Fail closed without an address — there is no way to prove the host is
+    not internal — but do not treat it as an engine fault.
+
+    A hostname that does not resolve says nothing about the rest of the run.
+    Halting on it let one dead host abort an entire assessment, including the
+    checks that read files and make no requests at all.
+    """
+
     class ExplodingResolver:
         async def resolve(self, hostname: str) -> list:
-            raise RuntimeError("boom")
+            raise OSError("Name or service not known")
 
     engine = ScopeEngine()
     ctx = make_context()
@@ -411,8 +486,25 @@ async def test_scope_engine_raises_internally_fails_closed() -> None:
     )
 
     assert decision.allowed is False
-    assert decision.rule == "internal_error"
-    assert decision.halted is True
+    assert decision.rule == "dns_resolution_failed"
+    assert decision.halted is False
+    assert ctx.halted is False
+
+
+async def test_a_host_resolving_to_no_addresses_is_blocked() -> None:
+    class EmptyResolver:
+        async def resolve(self, hostname: str) -> list:
+            return []
+
+    engine = ScopeEngine()
+    ctx = make_context()
+
+    decision = await engine.check(
+        ctx, dns_resolver=EmptyResolver(), method="GET", url="https://ai.example.test/api"
+    )
+
+    assert decision.allowed is False
+    assert decision.rule == "dns_resolution_failed"
 
 
 # --- kill switch -------------------------------------------------------------
@@ -468,6 +560,68 @@ def test_no_ungated_httpx_client_construction_outside_transport() -> None:
     assert offenders == [], (
         f"Found ungated httpx client construction outside transport.py: {offenders}"
     )
+
+
+def test_smtplib_is_used_in_exactly_one_sanctioned_module() -> None:
+    """The mail relay is the one destination that cannot travel through
+    `GatedTransport`, because SMTP is not HTTP. That exception is confined to
+    `app/core/integrations/send.py`, which asks the scope engine to adjudicate
+    the relay host before opening a socket. Pinned here so a second
+    socket-opening path cannot be added quietly."""
+    import pathlib
+    import re
+
+    app_root = pathlib.Path(__file__).resolve().parents[2] / "app"
+    allowed_file = app_root / "core" / "integrations" / "send.py"
+    pattern = re.compile(r"\bimport smtplib\b|\bfrom smtplib\b|\bsocket\.socket\(")
+
+    offenders = [
+        str(path)
+        for path in app_root.rglob("*.py")
+        if path != allowed_file and pattern.search(path.read_text(encoding="utf-8"))
+    ]
+    assert offenders == [], f"Found socket-level egress outside send.py: {offenders}"
+
+
+def test_the_code_host_client_cannot_write_to_a_repository() -> None:
+    """`app/core/vcs` reads a pull request and posts a check run. It must never
+    merge, push, update a ref or write a file — and the point of pinning it
+    statically is that a future contributor adding such a call has to delete
+    this test to do it, rather than slipping past review."""
+    import pathlib
+    import re
+
+    vcs_root = pathlib.Path(__file__).resolve().parents[2] / "app" / "core" / "vcs"
+    # The HTTP verbs GitHub uses for those operations, as this codebase spells
+    # them when calling the transport.
+    forbidden = re.compile(r'method\s*=\s*"(PUT|PATCH|DELETE)"')
+    paths = re.compile(r'"/repos/[^"]*/(merges|git/refs|git/commits|contents)')
+
+    offenders = []
+    for path in vcs_root.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        if forbidden.search(text) or paths.search(text):
+            offenders.append(str(path))
+
+    assert offenders == [], f"Found repository-write calls in app/core/vcs: {offenders}"
+
+
+def test_the_code_host_egress_context_permits_only_read_and_create() -> None:
+    """The static check above is belt; this is braces. Even if such a call were
+    added, the scope engine would refuse its verb."""
+    from app.core.vcs.contract import Destination, VcsProvider
+    from app.core.vcs.egress import vcs_egress_context
+
+    ctx = vcs_egress_context(
+        Destination(
+            provider=VcsProvider.GITHUB,
+            host="api.github.com",
+            api_base="https://api.github.com",
+        )
+    )
+    assert set(ctx.roe.allowed_methods) == {"GET", "POST"}
+    assert ctx.roe.allowed_domains == ("api.github.com",)
+    assert ctx.roe.allowed_ip_ranges == ()
 
 
 # --- scope explain / dry-run (docs/BUILD_SPEC.md §6.2, §18) -----------------
@@ -605,10 +759,13 @@ async def test_explain_reports_budget_exceeded(fake_dns: FakeDnsResolver) -> Non
     assert decision.rule == "budget_exceeded:tokens_sent"
 
 
-async def test_explain_fails_closed_on_unexpected_error() -> None:
+async def test_explain_reports_an_unresolvable_host_without_halting() -> None:
+    """`explain` is a preview, so it must never halt the run — and an
+    unresolvable host is reported as exactly that rather than as a fault."""
+
     class ExplodingResolver:
         async def resolve(self, hostname: str) -> list:
-            raise RuntimeError("boom")
+            raise OSError("Name or service not known")
 
     engine = ScopeEngine()
     ctx = make_context()
@@ -618,7 +775,8 @@ async def test_explain_fails_closed_on_unexpected_error() -> None:
     )
 
     assert decision.allowed is False
-    assert decision.rule == "internal_error"
+    assert decision.rule == "dns_resolution_failed"
+    assert ctx.halted is False
 
 
 async def test_unparseable_url_blocked(fake_dns: FakeDnsResolver) -> None:
@@ -631,10 +789,10 @@ async def test_unparseable_url_blocked(fake_dns: FakeDnsResolver) -> None:
     assert decision.rule == "unparseable_url"
 
 
-async def test_check_redirect_target_fails_closed_on_unexpected_error() -> None:
+async def test_check_redirect_target_blocks_an_unresolvable_location() -> None:
     class ExplodingResolver:
         async def resolve(self, hostname: str) -> list:
-            raise RuntimeError("boom")
+            raise OSError("Name or service not known")
 
     engine = ScopeEngine()
     ctx = make_context()
@@ -644,4 +802,4 @@ async def test_check_redirect_target_fails_closed_on_unexpected_error() -> None:
     )
 
     assert decision.allowed is False
-    assert decision.rule == "internal_error"
+    assert decision.rule == "dns_resolution_failed"

@@ -1,0 +1,69 @@
+# Container image scanning (docs/BUILD_SPEC.md §23).
+#
+# Three images are built here and scanned on different terms. The backend and
+# worker are products: a HIGH finding fails the build. The demo target is
+# intentionally vulnerable — failing on its findings would be failing on the
+# thing it was built to be — so it is scanned for *base image and dependency*
+# problems only, which are not part of its seeded design.
+name: container
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "53 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  images:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: backend
+            dockerfile: Dockerfile.backend
+            context: .
+            severity: "HIGH,CRITICAL"
+          - name: worker
+            dockerfile: Dockerfile.worker
+            context: .
+            severity: "HIGH,CRITICAL"
+          - name: demo-target
+            dockerfile: demo-target/Dockerfile
+            context: ./demo-target
+            # Only CRITICAL, and only in the base image and installed packages.
+            # The application's own flaws are the point of it.
+            severity: "CRITICAL"
+    steps:
+      - uses: actions/checkout@v4
+        # The default checkout ref on a pull_request event is GitHub's synthetic
+        # merge-with-base commit, not the PR's own head — which can differ from
+        # either side and makes a check red or green for a reason nobody pushed.
+        # Pinned so this always tests what is actually on the branch.
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Build ${{ matrix.name }}
+        run: docker build -f ${{ matrix.dockerfile }} -t aegis-${{ matrix.name }}:ci ${{ matrix.context }}
+
+      - name: Trivy — vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: aegis-${{ matrix.name }}:ci
+          severity: ${{ matrix.severity }}
+          ignore-unfixed: true
+          exit-code: "1"
+          format: table
+
+      - name: Trivy — misconfiguration and secrets in the image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: aegis-${{ matrix.name }}:ci
+          scanners: misconfig,secret
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          format: table

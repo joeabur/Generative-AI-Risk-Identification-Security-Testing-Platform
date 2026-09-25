@@ -41,6 +41,14 @@ class RulesOfEngagement:
     forbidden_headers: tuple[str, ...]
     budgets: Budgets
     safe_mode: bool = True
+    # Whether a probe or a third-party tool may take an action that changes the
+    # target's state (§5.2 `behaviour.allow_state_mutation`). Default **false**,
+    # and deliberately separate from `safe_mode`: safe mode is about how a probe
+    # behaves, this is about whether destructive tooling may run at all. The
+    # DAST engine reads it to decide which Nuclei templates and which ZAP scan
+    # mode are permitted, so leaving it false is what keeps an authorized scan
+    # from becoming an outage.
+    allow_state_mutation: bool = False
     blackout_windows: tuple[BlackoutWindow, ...] = ()
 
 

@@ -49,6 +49,12 @@ jobs:
       JWT_SECRET: ci-only-secret-do-not-use-elsewhere
     steps:
       - uses: actions/checkout@v4
+        # The default checkout ref on a pull_request event is GitHub's synthetic
+        # merge-with-base commit, not the PR's own head — which can differ from
+        # either side and makes a check red or green for a reason nobody pushed.
+        # Pinned so this always tests what is actually on the branch.
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - uses: actions/setup-python@v5
         with:
@@ -56,7 +62,11 @@ jobs:
 
       - name: Install backend dependencies
         working-directory: backend
-        run: pip install -e ".[dev]"
+        # The AppSec scanners are installed so CI exercises the engines
+        # against the lab fixtures rather than skipping them. Each adapter
+        # still degrades gracefully when its tool is absent (§15), which the
+        # test suite covers separately.
+        run: pip install -e ".[dev,appsec,pdf]"
 
       - name: Ruff
         working-directory: backend
@@ -72,13 +82,29 @@ jobs:
 
       - name: Pytest
         working-directory: backend
-        run: python -m pytest -q --cov=app --cov-report=term-missing
+        # §24's coverage gate, enforced rather than reported. The overall
+        # threshold is the one pytest-cov can fail on directly; the per-package
+        # floors (core/ and core/scope/) are checked by the step below, because
+        # an overall number can stay healthy while the part that matters most
+        # rots.
+        run: python -m pytest -q --cov=app --cov=aegis_cli --cov-report=term-missing
+             --cov-report=json:coverage.json --cov-fail-under=80
+
+      - name: Per-package coverage floors
+        working-directory: backend
+        run: python -m scripts.coverage_floors coverage.json
 
   frontend:
     name: Frontend (lint, typecheck, test, build)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        # The default checkout ref on a pull_request event is GitHub's synthetic
+        # merge-with-base commit, not the PR's own head — which can differ from
+        # either side and makes a check red or green for a reason nobody pushed.
+        # Pinned so this always tests what is actually on the branch.
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - uses: actions/setup-node@v4
         with:

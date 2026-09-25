@@ -47,6 +47,7 @@ class _RulesOfEngagementSchema(BaseModel):
     forbidden_headers: list[str] = Field(default_factory=list)
     budgets: _BudgetsSchema
     safe_mode: bool = True
+    allow_state_mutation: bool = False
     blackout_windows: list[_BlackoutWindowSchema] = Field(default_factory=list)
 
 
@@ -74,6 +75,7 @@ def resolve_rules_of_engagement(raw: dict[str, Any]) -> RulesOfEngagement:
             max_wall_clock_minutes=parsed.budgets.max_wall_clock_minutes,
         ),
         safe_mode=parsed.safe_mode,
+        allow_state_mutation=parsed.allow_state_mutation,
         blackout_windows=tuple(
             BlackoutWindow(starts_at=w.starts_at, ends_at=w.ends_at)
             for w in parsed.blackout_windows

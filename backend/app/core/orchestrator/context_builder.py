@@ -8,12 +8,21 @@ part of the pure engine.
 """
 
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 
+from app.core.appsec.workspace import (
+    DEFAULT_MAX_REPO_SIZE_MB,
+    CodeScope,
+    CodeScopeError,
+    Workspace,
+    resolve_workspace,
+)
 from app.core.discovery.openapi import (
     DiscoveredBodyField,
     DiscoveredOperation,
     DiscoveredParameter,
 )
+from app.core.probes.ai.contract import AiProbeTarget, DeclaredTool
 from app.core.probes.credentials import AuthorizationTestPlan, CredentialSet, SyntheticAccount
 from app.core.probes.protocol import ProbeTarget
 from app.core.scope.budgets import BudgetTracker
@@ -22,6 +31,10 @@ from app.core.scope.errors import RoEValidationError
 from app.core.scope.kill_switch import KillSwitch
 from app.core.scope.models import ResolvedAuthorization
 from app.core.scope.resolve import resolve_authorization, resolve_rules_of_engagement
+from app.core.scope.transport import GatedTransport
+from app.core.targets.chat_http import ChatHttpAdapter, ChatHttpConfig
+from app.core.targets.openai_compatible import OpenAiCompatibleAdapter, OpenAiCompatibleConfig
+from app.core.targets.protocol import ConversationalAdapter
 from app.models.surface_endpoint import SurfaceEndpoint
 from app.models.synthetic_account import SyntheticAccount as SyntheticAccountRecord
 from app.models.target import Target
@@ -58,6 +71,7 @@ def build_run_context(target: Target) -> RunContext:
             "forbidden_headers": roe_row.forbidden_headers,
             "budgets": roe_row.budgets,
             "safe_mode": roe_row.safe_mode,
+            "allow_state_mutation": roe_row.allow_state_mutation,
             "blackout_windows": roe_row.blackout_windows,
         }
     )
@@ -151,4 +165,83 @@ def _authorization_plan(
     return AuthorizationTestPlan(
         accounts=declared,
         credentials=CredentialSet.from_environment(declared, environ),
+    )
+
+
+def build_conversational_adapter(
+    target: Target, transport: "GatedTransport"
+) -> "ConversationalAdapter | None":
+    """The adapter for this target's chat surface, or `None`.
+
+    `None` means the operator did not configure one, and the AI engine then
+    declines rather than guessing an endpoint and a wire format. A guessed
+    adapter would send adversarial prompts at a URL nobody authorized in
+    that shape.
+    """
+    kind = (target.adapter_kind or "").strip().lower()
+    if not kind:
+        return None
+
+    config = dict(target.adapter_config or {})
+    config.setdefault("base_url", target.base_url)
+
+    if kind == "chat_http":
+        return ChatHttpAdapter(ChatHttpConfig(**config), transport)
+    if kind == "openai_compatible":
+        return OpenAiCompatibleAdapter(OpenAiCompatibleConfig(**config), transport)
+    raise ValueError(f"unknown adapter kind {target.adapter_kind!r}")
+
+
+def build_ai_probe_target(
+    target: Target, *, safe_mode: bool, trials: int | None = None
+) -> AiProbeTarget:
+    """The AI engine's view of the target, including its declared tools."""
+    return AiProbeTarget(
+        name=target.name,
+        surface=f"{(target.adapter_kind or 'chat').upper()} {target.base_url}",
+        safe_mode=safe_mode,
+        declared_tools=tuple(
+            DeclaredTool(
+                name=str(tool.get("name", "")),
+                description=str(tool.get("description", "")),
+                writes=bool(tool.get("writes", False)),
+                irreversible=bool(tool.get("irreversible", False)),
+                external=bool(tool.get("external", False)),
+                requires_confirmation=bool(tool.get("requires_confirmation", False)),
+            )
+            for tool in (target.declared_tools or [])
+            if isinstance(tool, dict) and tool.get("name")
+        ),
+        trials=trials,
+    )
+
+
+def build_workspace(target: Target, checkout: "Path") -> "Workspace":
+    """Resolve a target's declared code scope against a local checkout.
+
+    Raises `CodeScopeError` when the Rules of Engagement carry no
+    `code_scope`. That is the same fail-closed refusal §6.2 applies to an
+    unresolved URL scope: a checkout with no stated boundary may contain a
+    second project, or a developer's credentials, and "everything" is never
+    the safe reading of silence.
+    """
+    roe = target.rules_of_engagement
+    raw = dict(roe.code_scope or {}) if roe is not None else {}
+    if not raw:
+        raise CodeScopeError(
+            "No code_scope is configured for this target. Declare which paths may be "
+            "scanned before running the SAST, SCA, secrets or IaC engines."
+        )
+
+    scope = CodeScope(
+        allowed_paths=tuple(str(item) for item in raw.get("allowed_paths", [])),
+        excluded_paths=tuple(str(item) for item in raw.get("excluded_paths", [])),
+        max_repo_size_mb=int(raw.get("max_repo_size_mb", DEFAULT_MAX_REPO_SIZE_MB)),
+        allowed_repo_hosts=tuple(str(item) for item in raw.get("allowed_repo_hosts", [])),
+    )
+    return resolve_workspace(
+        checkout,
+        scope,
+        languages=tuple(str(item) for item in (target.code_languages or [])),
+        build_manifest_paths=tuple(str(item) for item in (target.code_build_manifest_paths or [])),
     )

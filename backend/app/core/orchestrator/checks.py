@@ -33,6 +33,19 @@ class Check(Protocol):
     async def run(self, ctx: RunContext, transport: GatedTransport) -> list[CheckResult]: ...
 
 
+def requires_network(check: object) -> bool:
+    """Does this check need the network to do its job?
+
+    Checks default to `True`. A check that only reads files — the AppSec
+    engines — declares `False`, which is what keeps an exhausted *request*
+    budget from cancelling work that would not have spent one. A budget
+    bounds outbound requests; it is not a general stop signal, and treating
+    it as one silently dropped code scanning from any run with a modest
+    request budget.
+    """
+    return bool(getattr(check, "requires_network", True))
+
+
 @dataclass(frozen=True)
 class Endpoint:
     method: str

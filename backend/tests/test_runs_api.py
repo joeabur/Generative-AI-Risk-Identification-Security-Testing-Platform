@@ -15,6 +15,9 @@ from httpx import AsyncClient, Response
 from sqlalchemy import delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import get_settings
+from app.core.csrf import anon as csrf_anon
+from app.core.csrf.enforce import HEADER_NAME
 from app.core.scope.engine import ScopeEngine
 from app.core.scope.transport import GatedTransport
 from app.models.authorization import Authorization
@@ -68,9 +71,13 @@ def _worker_transport() -> GatedTransport:
 
 
 async def _register(client: AsyncClient, email: str, password: str) -> dict:
+    _response_anon_token = (await client.get("/api/v1/auth/csrf")).cookies[
+        csrf_anon.cookie_name(secure=get_settings().session_cookie_secure)
+    ]
     response = await client.post(
         "/api/v1/auth/register",
         json={"email": email, "full_name": email.split("@")[0].title(), "password": password},
+        headers={HEADER_NAME: _response_anon_token},
     )
     assert response.status_code == 201
     return response.json()

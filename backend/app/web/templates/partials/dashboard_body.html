@@ -1,0 +1,60 @@
+{#
+  The overview fragment. Included by dashboard.html for a full page load and
+  returned on its own to HTMX, so there is one source of truth for these
+  numbers rather than a page and a partial that can drift.
+#}
+<div id="dashboard-body">
+<div class="cards">
+  <div class="card">
+    <div class="k">Open findings</div>
+    <div class="n">{{ overview.open_findings }}</div>
+    <div class="note">{{ overview.critical }} critical, {{ overview.high }} high</div>
+  </div>
+  <div class="card">
+    <div class="k">Targets</div>
+    <div class="n">{{ overview.targets }}</div>
+    <div class="note"><a href="/app/organizations/{{ organization_id }}/targets">configuration</a></div>
+  </div>
+  <div class="card">
+    <div class="k">Runs, last 7 days</div>
+    <div class="n">{{ overview.runs_last_7_days }}</div>
+    <div class="note">{{ overview.failed_runs_last_7_days }} failed</div>
+  </div>
+  <div class="card">
+    <div class="k">Workflows</div>
+    <div class="n">{{ overview.workflows }}</div>
+    <div class="note">{{ overview.failing_gates }} gate failure(s) in 7 days</div>
+  </div>
+  <div class="card">
+    <div class="k">Undelivered notifications</div>
+    <div class="n">{{ overview.undelivered_notifications }}</div>
+    <div class="note">dead-lettered or refused</div>
+  </div>
+</div>
+
+<h2>Open findings by severity</h2>
+<div class="panel">
+  <table>
+    <thead><tr><th>Severity</th><th>Open</th></tr></thead>
+    <tbody>
+    {% for item in overview.by_severity %}
+      <tr>
+        <td class="sev sev-{{ item.severity }}">
+          <a href="/app/organizations/{{ organization_id }}/findings?severity={{ item.severity }}">{{ item.severity|capitalize }}</a>
+        </td>
+        <td class="num">{{ item.count }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<h2>Highest risk open findings</h2>
+{% include "partials/findings_table.html" %}
+
+<h2>Recent runs</h2>
+{% include "partials/runs_table.html" %}
+
+<h2>Recent workflow runs</h2>
+{% include "partials/workflow_runs_table.html" %}
+</div>

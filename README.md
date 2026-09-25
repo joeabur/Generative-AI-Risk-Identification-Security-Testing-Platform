@@ -11,12 +11,75 @@ engine, determinism/ASR methodology, domain model, and the phased build
 plan — lives in **[`docs/BUILD_SPEC.md`](docs/BUILD_SPEC.md)**. Read that
 first; this README is the practical "how do I run it" companion.
 
-**Current status: Phase 1 of 13 (Foundation).** Authentication,
-organizations, role-based access control, and the multi-service deployment
-shape are real and working end to end. The actual security-testing engine
-(scope enforcement, adapters, AI/API probes, findings, evidence, reporting)
-does not exist yet — see [`docs/roadmap.md`](docs/roadmap.md) for exactly
-what's built versus deferred, and why.
+**Current status: v0.1.0 — Phases 1–16 complete.** What works end to
+end today: the scope/authorization engine and its gated transport (the single
+outbound control point), target adapters and OpenAPI discovery, run
+orchestration with cancellation and live progress, 16 API probes, 11 AI
+probes measured with Wilson-interval attack success rates against their own
+controls, the SAST/SCA/secrets/IaC engines plus supply-chain analysis (end-of-life
+runtimes, licence obligations, dependency name confusion, container packages), the AI assistant layer (drafts
+only, never execution), risk-scored findings with stable fingerprints, and
+content-addressed evidence plus reports in Markdown, HTML, PDF, JSON, SARIF
+2.1.0 and CSV, and a remediation board with a retest workflow that reports
+reproduced / not reproduced / not tested with the evidence from either side.
+
+There is also an `aegis-ai` CLI and a CI security gate with documented exit
+codes — see [`docs/cicd.md`](docs/cicd.md).
+
+Findings and finished runs can be sent out to Slack, Microsoft Teams, a
+signed generic webhook, or email. A notification channel is not an exception to
+the outbound rule: every delivery goes through the same scope-gated transport,
+under an allowlist derived from the channel's resolved destination, and webhook
+credentials are held by environment-variable reference rather than stored — see
+[`docs/integrations.md`](docs/integrations.md).
+
+Findings can also be posted back to a GitHub pull request as a check run with
+inline annotations, sharing the CI gate's verdict so a pull request and a
+pipeline cannot disagree. That integration reads the diff and writes a check
+run — it cannot push, merge or edit, and the scope engine refuses the HTTP verbs
+those would need. See [`docs/pull-requests.md`](docs/pull-requests.md).
+
+There is an isolated, intentionally vulnerable demo lab in
+[`demo-target/`](demo-target/), and a self-review of the platform's own
+controls in [`docs/security-review.md`](docs/security-review.md).
+
+Workflows and a server-rendered dashboard are in: a workflow is five stages
+(trigger, plan, actions, evidence, result) whose plan is derived from the
+trigger and the target's configuration alone, and whose gate decision an AI
+recommendation structurally cannot alter — see
+[`docs/workflows.md`](docs/workflows.md). The dashboard at `/app` is Jinja2 with
+optional HTMX, read-only because no write actions are built yet (not, any
+longer, for lack of a CSRF token — see `docs/csrf.md`), and every
+number on it is a real query — see [`docs/dashboard.md`](docs/dashboard.md).
+The Next.js app in `frontend/` remains the Phase-1 auth scaffold and is not
+the dashboard.
+
+Runtime protection is recorded as a *claim*, never a measurement, and no RASP
+agent ships — this platform does not run inside anybody's process. See
+[`docs/runtime-protection.md`](docs/runtime-protection.md). Releases are signed
+keylessly with Sigstore and carry build provenance; verify one before running it
+with the commands in [`docs/releasing.md`](docs/releasing.md).
+
+Cookie-authenticated state changes require a CSRF token, bound to the session
+so a planted cookie pair cannot forge one — and Bearer-authenticated API and
+CLI callers are deliberately exempt, because they were never at risk. See
+[`docs/csrf.md`](docs/csrf.md).
+
+Authentication endpoints are rate limited — two dimensions, throttled never
+locked out, and unable to tell a caller whether an account exists. See
+[`docs/rate-limiting.md`](docs/rate-limiting.md).
+
+A session can be killed server-side, not just its client cookie: `/auth/logout`
+revokes one token, `/auth/logout-all` revokes every token a user has ever been
+issued as an immediate response to a suspected leak. This is the one
+Redis-backed control on the platform that fails *closed*, deliberately the
+opposite of the rate limiter next to it. See
+[`docs/revocation.md`](docs/revocation.md).
+
+All eighteen phases are built. [`docs/roadmap.md`](docs/roadmap.md) records
+exactly what's built versus deferred, and why, phase by phase;
+[`docs/limitations.md`](docs/limitations.md) says what the tool cannot detect
+and where its false positives cluster.
 
 ## Why this exists
 
@@ -25,7 +88,7 @@ PyRIT, promptfoo, DeepTeam, Giskard. None of them combine a hard
 authorization/scope boundary, tamper-evident evidence, cross-tool finding
 normalization, and statistically honest (ASR + confidence interval)
 reporting into one assessment workflow. See `docs/BUILD_SPEC.md` §1.1 for
-the full comparison, and `docs/comparison.md` (once written) for where
+the full comparison, and [`docs/comparison.md`](docs/comparison.md) for where
 those tools are still better.
 
 ## Architecture
@@ -50,25 +113,41 @@ Phase 1 (rather than an MVP-first SQLite path) are in `docs/BUILD_SPEC.md`
 
 ## Quickstart
 
+Full instructions, including the two steps that are easy to miss, are in
+**[`docs/installation.md`](docs/installation.md)**. The executable version is
+[`docs/examples/quickstart.py`](docs/examples/quickstart.py) — the same script
+used to verify this release.
+
 ```bash
 cp .env.example .env
-docker compose up --build
+docker compose up --build          # see the note below
 ```
 
-Then open <http://localhost:3000>, register an account, and create an
-organization. Everything past that (assets, assessments, findings) is not
-built yet in this phase.
+Then register, create an organization, register the demo lab as a target, and —
+before anything reaches it — record an authorization grant and rules of
+engagement. A run without a grant is refused with `409`. That refusal is the
+product.
 
-> **Note on this sandbox's own validation:** the application was validated
-> end to end by running the backend under `uvicorn` against a live
-> PostgreSQL + Redis and the frontend under `next start` against that
-> backend, driving the real register → login → create-organization flow
-> over HTTP. Actually building the Docker images was not possible in the
-> environment this was built in (Docker Hub pulls are blocked by that
-> sandbox's network policy — see `docs/roadmap.md`); verify the
-> `docker compose up --build` path in a normal environment before relying
-> on it, though the CI workflow itself never pulls from Docker Hub, so it is
-> unaffected.
+**Verified end to end for 0.1.0**, running the API, a Celery worker and the demo
+lab directly (not under Docker):
+
+```
+run WITHOUT authorization        409  <- refused, as designed
+run status                       completed
+scan results                     10 results, 10 distinct codes
+findings                         7
+download report markdown/sarif/json  200
+evidence chain verify            ok=True
+```
+
+The lab's planted AWS key and both static tokens appear in none of the three
+report formats.
+
+> **Docker is unverified.** The environment this was built in blocks Docker Hub
+> blob downloads at the proxy (HTTP 403 from the registry CDN), so the images
+> could not be pulled and `docker compose up --build` has never actually run.
+> The compose file and Dockerfiles are written and reviewed but unexercised. The
+> direct-run path below *is* verified.
 
 ### Local development without Docker
 
@@ -122,20 +201,109 @@ clean, `next build` succeeds.
 - Structured error responses never leak stack traces or internal exception
   details to the client.
 
-What does **not** exist yet: the scope/authorization engine that gates
-outbound requests to a target (`docs/BUILD_SPEC.md` §6 — this is Phase 2 and
-is the actual safety boundary for the product's core purpose), rate
-limiting on auth endpoints, and server-side JWT revocation. See
-`docs/roadmap.md` for the complete list.
+- The scope engine is the single outbound control point: exclusions are
+  checked before allowlists, DNS is re-resolved per request, private and
+  cloud-metadata ranges are refused, and redirects are never followed
+  automatically. `GatedTransport` is the only place an HTTP client may be
+  constructed, and a static test greps `app/` to keep it that way.
+- Evidence is redacted before it is written, stored content-addressed with a
+  hash-chained manifest, and served only to a member of the owning
+  organization — there are no public report or evidence URLs. It is **not**
+  encrypted at rest; see `docs/roadmap.md`.
+- The AI assistant layer can draft and recommend. It cannot start a scan,
+  grant authorization, or change a finding's real fields under any
+  configuration.
+- Login and register are rate limited (per-identity and per-IP), cookie-
+  authenticated writes require a session-bound CSRF token, and JWTs can be
+  revoked server-side (per-session or "log out everywhere").
+
+See [`docs/guardrails.md`](docs/guardrails.md) for the consolidated map of
+every AI/LLM guardrail, human-in-the-loop checkpoint, and security control
+above, each linked to its full mechanism and test. `docs/roadmap.md` has the
+complete list of what is still deferred.
 
 ## Documentation
 
 - [`docs/BUILD_SPEC.md`](docs/BUILD_SPEC.md) — the full, unified build
   specification (mission, safety policy, architecture, domain model, probe
   catalogue, risk scoring, reporting, phased plan, definition of done).
+- [`docs/installation.md`](docs/installation.md) — install, quickstart, and
+  what was verified for this release.
+- [`docs/architecture.md`](docs/architecture.md) — shape, packages, and the
+  decisions worth knowing.
+- [`docs/authorization-and-scope.md`](docs/authorization-and-scope.md) — the
+  safety model in full. Read this one if you read only one.
+- [`docs/configuration.md`](docs/configuration.md) — every environment
+  variable, and why credentials are held by reference.
+- [`docs/authentication.md`](docs/authentication.md) and
+  [`docs/rbac.md`](docs/rbac.md) — passwords, tokens, API keys, the role ladder.
+- [`docs/scanning.md`](docs/scanning.md) — running a scan, what it needs, and
+  the run lifecycle.
+- [`docs/ai-security-testing.md`](docs/ai-security-testing.md) and
+  [`docs/api-security-testing.md`](docs/api-security-testing.md) — what each
+  engine tests, and what it does not.
+- [`docs/detection-methodology.md`](docs/detection-methodology.md) — trials,
+  baselines, Wilson intervals, fingerprints, and what a claim is worth.
+- [`docs/risk-model.md`](docs/risk-model.md) — every number in the scoring
+  tables.
+- [`docs/reporting.md`](docs/reporting.md) — formats, audiences, redaction and
+  access control.
+- [`docs/frameworks.md`](docs/frameworks.md) — pinned editions with retrieval
+  dates, and why CWE carries no version.
+- [`docs/limitations.md`](docs/limitations.md) — what this cannot detect, and
+  where false positives cluster.
+- [`docs/comparison.md`](docs/comparison.md) — honest positioning against
+  garak, PyRIT, promptfoo, DeepTeam, Aikido and ZAP, including where they win.
+- [`docs/threat-model.md`](docs/threat-model.md) and
+  [`docs/security-model.md`](docs/security-model.md) — who might attack this,
+  and what holds.
+- [`docs/guardrails.md`](docs/guardrails.md) — the consolidated map: AI/LLM
+  guardrails, human-in-the-loop checkpoints, and the security controls
+  already built in, each linked to its full mechanism.
+- [`docs/rate-limiting.md`](docs/rate-limiting.md),
+  [`docs/csrf.md`](docs/csrf.md), and
+  [`docs/revocation.md`](docs/revocation.md) — authentication rate limiting,
+  CSRF protection, and server-side JWT revocation.
+- [`docs/acceptable-use.md`](docs/acceptable-use.md) — the authorization rule,
+  stated plainly.
+- [`docs/deployment.md`](docs/deployment.md) and
+  [`docs/troubleshooting.md`](docs/troubleshooting.md).
+- [`docs/third-party.md`](docs/third-party.md) — every integrated tool, its
+  licence and how it is used.
 - [`docs/decisions/`](docs/decisions/) — architecture decision records.
+- [`docs/plugin-development.md`](docs/plugin-development.md) — writing a
+  plugin, what the platform guarantees it, and what it explicitly does not
+  (there is no sandbox, and the allowlist is the control).
+- [`docs/security-review.md`](docs/security-review.md) — a self-review of the
+  platform's own controls: how each was verified, and what is not covered.
+- [`docs/pull-requests.md`](docs/pull-requests.md) — posting findings to a
+  pull request: what that layer cannot do and how each boundary is enforced.
+- [`docs/dast.md`](docs/dast.md) — the scope-gated crawler: why a discovered
+  URL is checked before it is queued rather than before it is fetched, and what
+  the scanner adapters cannot guarantee.
+- [`docs/supply-chain.md`](docs/supply-chain.md) — end-of-life runtimes,
+  licence obligations, name confusion and container scanning: why each exists
+  where no CVE does, and what each deliberately does not claim.
+- [`docs/integrations.md`](docs/integrations.md) — outbound notifications:
+  why a channel cannot become an SSRF primitive, how credentials stay out of
+  the database, the retry and dead-letter rules, and the webhook signing
+  scheme.
+- [`docs/cicd.md`](docs/cicd.md) — the `aegis-ai` CLI, API keys, and the CI
+  security gate: its exit codes, and why it refuses to fail a build on an
+  unstable finding.
 - [`docs/roadmap.md`](docs/roadmap.md) — what's built, what's deferred, and
   why.
+
+## Contributing and security
+
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — setup, the checks that must pass, and
+  the eight rules that are not negotiable.
+- [`SECURITY.md`](SECURITY.md) — reporting a vulnerability privately, and what
+  is in and out of scope.
+- [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md)
+- [`CHANGELOG.md`](CHANGELOG.md)
+- [`docs/acceptable-use.md`](docs/acceptable-use.md) — **read this before
+  pointing the tool at anything.**
 
 ## License
 

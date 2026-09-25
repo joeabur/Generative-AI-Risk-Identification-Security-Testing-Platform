@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 
 from app.core.probes.api._support import (
     clip,
+    evidence_of,
     operation_url,
     surface_label,
     try_send,
@@ -119,6 +120,15 @@ class UnauthenticatedAccessProbe:
                         reproduction=(
                             f"Send {operation.method} {url} with no Authorization header.",
                             f"Observe HTTP {observation.status_code} instead of 401 or 403.",
+                        ),
+                        evidence_bundle=evidence_of(
+                            observation,
+                            probe_id=self.id,
+                            probe_version=self.version,
+                            verdict=(
+                                f"HTTP {observation.status_code} to a request carrying "
+                                "no credentials"
+                            ),
                         ),
                     )
                 )

@@ -1,8 +1,8 @@
 import enum
 import uuid
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Enum, ForeignKey, String
+from sqlalchemy import JSON, Enum, ForeignKey, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -30,6 +30,9 @@ class TargetKind(enum.StrEnum):
     API = "api"
     MCP_SERVER = "mcp_server"
     MODEL_ENDPOINT = "model_endpoint"
+    # Added by Addendum v2.1 §4.2 for classic DAST targets: a web application
+    # with no AI layer, tested by crawling and by third-party scanners.
+    WEB_APP = "web_app"
 
 
 class Target(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -56,6 +59,27 @@ class Target(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         Enum(TargetKind, name="target_kind_enum"), nullable=False
     )
     base_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    # Conversational adapter configuration (docs/BUILD_SPEC.md §8): which
+    # adapter speaks to this target and how. Absent means the target has no
+    # chat surface, so the AI engine declines rather than guessing one.
+    adapter_kind: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    adapter_config: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    # Tools the operator declared for an agentic target. §9 is explicit that
+    # a tool surface is never inferred, so an empty list means "not
+    # declared" and the agency probe says so.
+    declared_tools: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    # Source-code surface (Addendum v2.1 §3). Absent means the SAST, SCA,
+    # secrets-in-source and IaC engines refuse to run — the same fail-closed
+    # rule the scope engine applies to a URL, applied to a checkout.
+    #: What the operator CLAIMS is deployed in front of this target, in the
+    #: shape `app/core/rasp/contract.py` defines. A claim, never a measurement:
+    #: nothing on this platform tests runtime protection, and the `evidenced`
+    #: field on each entry keeps that visible in the data rather than in a
+    #: comment (docs/BUILD_SPEC.md §5.1, §26 Phase 18).
+    runtime_protection: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    code_repo_ref: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    code_languages: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    code_build_manifest_paths: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
     created_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Runs — Aegis AI Security{% endblock %}
+{% block content %}
+<h1>Assessment runs</h1>
+<p class="sub">Most recent first. Blocked requests are the scope engine
+   refusing something — a number worth watching, not an error.</p>
+{% include "partials/runs_table.html" %}
+<h2>Starting a run</h2>
+<button disabled>{{ actions.start_run.label }}</button>
+<p class="why">{{ actions.start_run.reason }} <code>{{ actions.start_run.how }}</code></p>
+{% endblock %}

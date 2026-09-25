@@ -1,0 +1,59 @@
+# Authentication
+
+Three ways to authenticate, with different lifetimes and different ceilings.
+
+## Passwords
+
+**Argon2id**, via `argon2-cffi`. Not bcrypt: Argon2id is memory-hard, which is
+what raises the cost of an offline attack against a stolen hash.
+
+Registration returns an access token immediately, so the quickstart is one call
+rather than two. Passwords are never logged, never returned, and never
+recoverable — there is no "show password" path because there is nothing to show.
+
+## Session tokens
+
+A signed JWT (`HS256`) carrying the user id and expiry, default 12 hours. The
+frontend keeps it in an httpOnly, SameSite=Lax cookie; `SESSION_COOKIE_SECURE`
+adds the Secure attribute and should be on behind TLS.
+
+`JWT_SECRET` has an insecure development default, and the application **refuses
+to start** with it when `ENVIRONMENT=production`. A loud failure beats a quiet
+insecure default.
+
+## API keys
+
+For CI, where a standing credential lives in a runner and is the most exposed
+thing the platform issues. Three properties matter:
+
+**Hashed with SHA-256, not Argon2.** That is deliberate and not a weakening: the
+token is 256 bits of CSPRNG output, so there is no low-entropy guess to slow
+down. Password hashing exists to buy time against guessable inputs; a random
+256-bit token has none.
+
+**Shown once.** `POST …/api-keys` returns the secret; no endpoint returns it
+again, and none exists to. Rotation is create-then-revoke, so a pipeline can
+move to the new key before the old one stops working.
+
+**Capped below the creator's role.** Keys carry scopes — `read`, `scan`,
+`triage` — and the highest role any scope maps to is *security engineer*. A key
+therefore cannot create a target, grant authorization, add a member, or mint
+another key, no matter who created it. A credential in a CI runner must not be
+able to authorize a new target: that grant is the human act this platform is
+built around.
+
+Comparison is constant-time (`hmac.compare_digest`). Keys may carry an expiry,
+and one already in the past is rejected at creation — a key that cannot be used
+is a confusing way to say "revoked".
+
+## Where this is enforced
+
+`app/auth/dependencies.py`. `get_current_user` accepts either a session token or
+an API key; `require_membership(role)` then resolves the caller's membership in
+the organization named in the path and applies the role floor, capping at the
+key's ceiling where one applies.
+
+Non-members get **404, not 403**, so the existence of another organization's
+resources is not observable. `backend/tests/security/test_authorization_matrix.py`
+walks every route and asserts exactly that, then pins the required role for each
+one so a downgrade fails by name.

@@ -40,7 +40,14 @@ jobs:
           cache: pip
 
       - name: Install analysis tools
-        run: pip install bandit semgrep detect-secrets
+        # detect-secrets is pinned, not just installed. Its baseline file
+        # embeds the exact producing version, and the hook treats *any*
+        # mismatch — including a newer release — as "needs updating" and
+        # exits 3 every single run, regardless of whether any secret
+        # actually changed. Bumping this and `.secrets.baseline`'s
+        # `version` field together is a deliberate, reviewed step, not an
+        # upstream release landing silently under us.
+        run: pip install bandit semgrep detect-secrets==1.5.0
 
       - name: Bandit
         # Medium and above, and the whole app. `-ll` rather than a baseline

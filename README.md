@@ -48,7 +48,8 @@ Workflows and a server-rendered dashboard are in: a workflow is five stages
 trigger and the target's configuration alone, and whose gate decision an AI
 recommendation structurally cannot alter — see
 [`docs/workflows.md`](docs/workflows.md). The dashboard at `/app` is Jinja2 with
-optional HTMX, read-only because this platform has no CSRF token, and every
+optional HTMX, read-only because no write actions are built yet (not, any
+longer, for lack of a CSRF token — see `docs/csrf.md`), and every
 number on it is a real query — see [`docs/dashboard.md`](docs/dashboard.md).
 The Next.js app in `frontend/` remains the Phase-1 auth scaffold and is not
 the dashboard.
@@ -212,9 +213,14 @@ clean, `next build` succeeds.
 - The AI assistant layer can draft and recommend. It cannot start a scan,
   grant authorization, or change a finding's real fields under any
   configuration.
+- Login and register are rate limited (per-identity and per-IP), cookie-
+  authenticated writes require a session-bound CSRF token, and JWTs can be
+  revoked server-side (per-session or "log out everywhere").
 
-What does **not** exist yet: rate limiting on auth endpoints and server-side
-JWT revocation. See `docs/roadmap.md` for the complete list.
+See [`docs/guardrails.md`](docs/guardrails.md) for the consolidated map of
+every AI/LLM guardrail, human-in-the-loop checkpoint, and security control
+above, each linked to its full mechanism and test. `docs/roadmap.md` has the
+complete list of what is still deferred.
 
 ## Documentation
 
@@ -251,6 +257,13 @@ JWT revocation. See `docs/roadmap.md` for the complete list.
 - [`docs/threat-model.md`](docs/threat-model.md) and
   [`docs/security-model.md`](docs/security-model.md) — who might attack this,
   and what holds.
+- [`docs/guardrails.md`](docs/guardrails.md) — the consolidated map: AI/LLM
+  guardrails, human-in-the-loop checkpoints, and the security controls
+  already built in, each linked to its full mechanism.
+- [`docs/rate-limiting.md`](docs/rate-limiting.md),
+  [`docs/csrf.md`](docs/csrf.md), and
+  [`docs/revocation.md`](docs/revocation.md) — authentication rate limiting,
+  CSRF protection, and server-side JWT revocation.
 - [`docs/acceptable-use.md`](docs/acceptable-use.md) — the authorization rule,
   stated plainly.
 - [`docs/deployment.md`](docs/deployment.md) and

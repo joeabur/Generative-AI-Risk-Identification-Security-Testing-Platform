@@ -2,6 +2,9 @@
 
 The guarantees this platform makes about itself, and the mechanism behind each
 one. `docs/threat-model.md` says who might attack it; this page says what holds.
+`docs/guardrails.md` is the shorter, consolidated map of the AI/LLM-specific
+guardrails, human-in-the-loop checkpoints, and the controls below, each linked
+back to the full mechanism.
 
 Each row names how the guarantee is enforced. "By construction" means there is
 no code path that could do otherwise; "by test" means a test fails if it stops
@@ -33,6 +36,9 @@ being true. Most are both.
 | 20 | The pull-request layer cannot write to a repository | No such method; a static check greps for the write verbs and endpoints; the egress context permits only `GET`/`POST` |
 | 21 | The demo lab has no network egress | `internal: true` network, no gateway, no published ports, and it refuses to start with a provider credential present |
 | 22 | Reports have no public URLs | Served through the authenticated API; evidence is a filesystem path, not a URL |
+| 23 | Authentication endpoints cannot be brute-forced without cost | Login/register are rate limited on both per-identity and per-IP dimensions; throttled (429), never locked out — `docs/rate-limiting.md` |
+| 24 | A cross-site page cannot forge a cookie-authenticated write | CSRF token is an HMAC over the session cookie's own value, enforced as middleware over every route — `docs/csrf.md` |
+| 25 | A logged-out or suspected-leaked token stops working immediately | Per-token deny-list on `/auth/logout`; durable per-user cutoff on `/auth/logout-all`; this control fails *closed* — `docs/revocation.md` |
 
 ## The habit behind the tests
 
@@ -61,7 +67,8 @@ checked.
 - **Append-only is by construction, not by grant.** Revoking `UPDATE`/`DELETE`
   on `audit_logs` at the database level is recommended and not enforced.
 - **Evidence is unencrypted at rest.**
-- **No rate limiting on the platform's own API.**
+- **Rate limiting covers only `login`/`register`.** Authenticated routes rely
+  on RBAC instead — see `docs/rate-limiting.md` §"What is not limited".
 
 `docs/security-review.md` carries the full self-review, including how each
 control was verified and what is not covered.

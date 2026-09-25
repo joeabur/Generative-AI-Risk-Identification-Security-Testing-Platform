@@ -13,6 +13,7 @@ real session/token management; this closes it.
 |---|---|---|---|---|
 | Per-token revocation | `POST /auth/logout` | one token | Redis, TTL = token's own remaining lifetime | No — bounded loss, see below |
 | Per-user cutoff | `POST /auth/logout-all` | every token ever issued to that user | Postgres (`users.tokens_valid_after`) | Yes |
+| Per-token revocation, by name | `DELETE /auth/sessions/{id}` | one token, chosen from a list rather than only "this one" | Same deny-list as `/auth/logout` | No — same bounded loss |
 
 **Per-token** is a deny-list keyed by the token's own `jti` claim, so logging
 out kills exactly the session that called it and nothing else. Losing an
@@ -70,6 +71,28 @@ the rate limiter accepts, and the correct trade for what this control is for.
 API keys are entirely unaffected either way: they carry their own revocation
 (`ApiKey.revoked_at`, checked from Postgres) and never touch this store.
 
+## A third table: `user_sessions`, a record rather than a decision
+
+The two mechanisms above answer "kill this" and "kill everything", but until
+now neither could answer "what is currently active" — `logout-all` works by
+cutoff, not by enumeration, so this platform never had to track which tokens
+existed, only which were dead. `app/models/user_session.py` adds that
+tracking: one row per token issued at `/auth/register` or `/auth/login`,
+read by `GET /auth/sessions` and acted on by `DELETE /auth/sessions/{id}`.
+
+This table does not change where the authorization decision is made.
+Revoking a session by id still writes its `jti` to the same per-token
+deny-list `/auth/logout` uses; `logout-all` still works by cutoff and bulk-
+updates this table's rows only so the listing stays honest about what
+happened, not because the cutoff needs them. Losing this table entirely —
+a botched restore, for instance — makes past sessions invisible but revokes
+nothing that was already revoked and un-revokes nothing that was not.
+
+Both new endpoints are scoped to the caller's own account: there is no
+admin view of another user's sessions, and revoking someone else's returns
+404, the same non-disclosure `require_membership` already uses elsewhere on
+this API.
+
 ## Using it
 
 ```bash
@@ -78,6 +101,10 @@ curl -X POST "$AEGIS/auth/logout" -H "Authorization: Bearer $TOKEN"
 
 # End every session — the response to "I think this leaked".
 curl -X POST "$AEGIS/auth/logout-all" -H "Authorization: Bearer $TOKEN"
+
+# What is currently active, and end one specific *other* one by id.
+curl "$AEGIS/auth/sessions" -H "Authorization: Bearer $TOKEN"
+curl -X DELETE "$AEGIS/auth/sessions/$SESSION_ID" -H "Authorization: Bearer $TOKEN"
 ```
 
 Both clear the session and CSRF cookies when called with a cookie-
@@ -88,10 +115,6 @@ stale page" requirement to justify carrying the exemption).
 
 ## What this does not cover
 
-- **No visibility into how many sessions exist.** `logout-all` works by
-  cutoff, not by enumeration, so there is no "your active sessions" list to
-  show a user, and no way to revoke one specific *other* session by name —
-  only "this one" or "all of them".
 - **A token revoked and a Redis restart in between:** the per-token deny-list
   entry is lost; the token is valid again until its own `exp`, at most 12
   hours later by default. The durable `logout-all` cutoff is not affected by

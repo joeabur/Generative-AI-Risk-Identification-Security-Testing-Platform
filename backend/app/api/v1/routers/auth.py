@@ -1,11 +1,19 @@
+import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from app.audit.service import record_event
 from app.auth.dependencies import CurrentUser, DbSession
-from app.auth.security import create_access_token, hash_password, verify_password
+from app.auth.security import (
+    create_access_token,
+    decode_access_token,
+    expires_at,
+    hash_password,
+    token_id,
+    verify_password,
+)
 from app.core.config import get_settings
 from app.core.csrf import anon as csrf_anon
 from app.core.csrf import enforce as csrf_enforce
@@ -13,9 +21,30 @@ from app.core.csrf import tokens as csrf_tokens
 from app.core.ratelimit import dependency as ratelimit
 from app.core.revocation import dependency as revocation
 from app.models.user import User
-from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, UserRead
+from app.models.user_session import UserSession
+from app.schemas.auth import LoginRequest, RegisterRequest, SessionRead, TokenResponse, UserRead
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+
+async def _record_session(
+    db: DbSession, *, user_id: uuid.UUID, token: str, request: Request
+) -> None:
+    """A row for `GET /auth/sessions` to list, alongside the cookie/token
+    `_set_session_cookie` hands to the caller. Decoding the token just
+    encoded is one redundant pass over it, in exchange for not changing
+    `create_access_token`'s signature for every other caller.
+    """
+    payload = decode_access_token(token)
+    db.add(
+        UserSession(
+            user_id=user_id,
+            jti=token_id(payload),
+            expires_at=expires_at(payload),
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+    )
 
 
 def _set_session_cookie(response: Response, token: str) -> None:
@@ -100,6 +129,7 @@ async def register(
     await db.flush()
 
     token = create_access_token(subject=user.id)
+    await _record_session(db, user_id=user.id, token=token, request=request)
     await record_event(
         db,
         action="auth.register",
@@ -154,6 +184,7 @@ async def login(
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Account is inactive")
 
     token = create_access_token(subject=user.id)
+    await _record_session(db, user_id=user.id, token=token, request=request)
     # A correct password clears the counters. Only failures should accumulate:
     # counting successes would let a busy legitimate user throttle themselves,
     # which is how a rate limit gets switched off in production.
@@ -186,6 +217,15 @@ async def logout(
         exp: datetime = request.state.token_exp
         ttl = int((exp - datetime.now(UTC)).total_seconds())
         await revocation.revoke(jti, ttl)
+        # The deny-list entry above is what actually stops this token working
+        # again; this update is so `GET /auth/sessions` stops listing it as
+        # active. Losing one without the other is not a security gap either
+        # way — see the `UserSession` model docstring.
+        await db.execute(
+            update(UserSession)
+            .where(UserSession.jti == jti, UserSession.revoked_at.is_(None))
+            .values(revoked_at=datetime.now(UTC))
+        )
 
     await record_event(
         db,
@@ -206,15 +246,22 @@ async def logout_all(response: Response, current_user: CurrentUser, db: DbSessio
     """Kill every token this user has ever been issued, this one included.
 
     The response to "I think my token leaked" or "I logged in on a shared
-    machine and forgot to log out". A bulk cutover on the user row rather than
-    finding and revoking each outstanding token individually — this platform
-    does not track which tokens exist, only which are dead, and a per-user
-    cutoff needs neither.
+    machine and forgot to log out". A bulk cutover on the user row, not a
+    loop over every session row this platform now tracks
+    (`app/models/user_session.py`) — the cutoff invalidates a token by *when*
+    it was issued, so it works even for a token whose row was lost, and
+    covers one issued the instant before this request commits, which a loop
+    over rows fetched slightly earlier could not.
     """
     # Compared against a token's precise `iat_us` claim
     # (app/auth/security.py), not the standard second-granularity `iat` — see
     # that module for why the distinction matters here specifically.
     current_user.tokens_valid_after = datetime.now(UTC)
+    await db.execute(
+        update(UserSession)
+        .where(UserSession.user_id == current_user.id, UserSession.revoked_at.is_(None))
+        .values(revoked_at=datetime.now(UTC))
+    )
     await record_event(
         db,
         action="auth.logout_all",
@@ -232,3 +279,69 @@ async def logout_all(response: Response, current_user: CurrentUser, db: DbSessio
 @router.get("/me", response_model=UserRead)
 async def me(current_user: CurrentUser) -> UserRead:
     return UserRead.model_validate(current_user)
+
+
+@router.get("/sessions", response_model=list[SessionRead])
+async def list_sessions(
+    request: Request, current_user: CurrentUser, db: DbSession
+) -> list[SessionRead]:
+    """Every session this account can currently authenticate with.
+
+    The gap this closes: previously the only answers to "what is logged in
+    as me right now" were "this one" (`/auth/logout`) or "everything"
+    (`/auth/logout-all`) — there was nothing to list. Scoped to the caller's
+    own account only; there is no admin view of another user's sessions
+    here, the same boundary `/auth/logout-all` already draws.
+    """
+    now = datetime.now(UTC)
+    result = await db.execute(
+        select(UserSession)
+        .where(
+            UserSession.user_id == current_user.id,
+            UserSession.revoked_at.is_(None),
+            UserSession.expires_at > now,
+        )
+        .order_by(UserSession.created_at.desc())
+    )
+    current_jti = getattr(request.state, "token_jti", None)
+    return [
+        SessionRead(
+            id=session.id,
+            created_at=session.created_at,
+            expires_at=session.expires_at,
+            ip_address=session.ip_address,
+            user_agent=session.user_agent,
+            is_current=(session.jti == current_jti),
+        )
+        for session in result.scalars().all()
+    ]
+
+
+@router.delete("/sessions/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_session(session_id: uuid.UUID, current_user: CurrentUser, db: DbSession) -> None:
+    """Revoke one session by name — the piece `/auth/logout` (this one) and
+    `/auth/logout-all` (every one) could not express between them.
+
+    404 rather than 403 for a session belonging to someone else, the same
+    non-disclosure `require_membership` uses for another organization's
+    resource: a caller with no legitimate reason to know already cannot tell
+    "not yours" from "does not exist" for anything else on this API either.
+    """
+    session = await db.get(UserSession, session_id)
+    if session is None or session.user_id != current_user.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Session not found")
+
+    if session.revoked_at is None:
+        ttl = int((session.expires_at - datetime.now(UTC)).total_seconds())
+        if ttl > 0:
+            await revocation.revoke(session.jti, ttl)
+        session.revoked_at = datetime.now(UTC)
+        await record_event(
+            db,
+            action="auth.session_revoke",
+            resource_type="user_session",
+            resource_id=str(session.id),
+            result="allow",
+            user_id=current_user.id,
+        )
+        await db.commit()

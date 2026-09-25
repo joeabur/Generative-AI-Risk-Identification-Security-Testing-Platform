@@ -2400,3 +2400,83 @@ of rows plus one, assert the extra row is absent from page 1 and present on
 page 2 (and the reverse for the "Previous"/"Next" and "Newer"/"Older" link
 visibility), and confirm the test actually fails — page 2 rendering the
 same rows as page 1 — with `.offset()` reverted, before restoring it.
+
+## Post-Phase-18: session visibility and revocation by name
+
+The Phase 18 revocation section's own deferral list named this directly:
+"no visibility into active sessions... because this platform does not
+enumerate issued tokens." Closing it meant reversing that specific
+decision — deliberately, not by accident — since "list what is active" has
+no answer without a durable record of what was ever issued, and the
+revocation deny-list only ever records what is *dead*.
+
+### A new table, kept strictly separate from the authorization decision
+
+`app/models/user_session.py` adds `user_sessions`: one row per issued
+token, written alongside the cookie in `register`/`login` via a small
+`_record_session` helper, carrying `jti`, `expires_at`, best-effort
+`ip_address`/`user_agent`, and a nullable `revoked_at`. The design choice
+that matters is what this table is *not*: it is a record for
+`GET /auth/sessions` to read, not a second place a request's validity is
+decided. That stays exactly where it already was — the deny-list in
+`app/core/revocation/` and `users.tokens_valid_after` — and the model's own
+docstring says so explicitly: losing this table makes past sessions
+invisible, but revokes nothing that was already revoked and un-revokes
+nothing that was not.
+
+`create_access_token`'s signature was deliberately left alone rather than
+made to also return the `jti` it generated — `_record_session` decodes the
+token it was just handed instead. One redundant decode per login, in
+exchange for not touching the two other places that construct a token
+today (`decode_access_token(create_access_token(...))` in
+`tests/security/test_revocation.py`) for a change only this one caller
+needed.
+
+### `/auth/logout-all` stayed a cutover, not a loop
+
+The obvious-looking alternative — now that sessions are tracked, revoke
+every tracked row for this user — was rejected. A bulk cutover by
+*timestamp* keeps two properties a loop over rows cannot: it invalidates a
+token whose row was somehow lost (a botched restore, a race with
+`_record_session`'s own write), and it invalidates one issued in the
+instant between the loop's `SELECT` and this request's `COMMIT`, which a
+snapshot taken slightly earlier could not have known about. `logout_all`
+does still bulk-update `user_sessions.revoked_at` for every row that is not
+already revoked — but that is bookkeeping for `GET /auth/sessions` to stay
+honest about what happened, not the mechanism that makes those tokens stop
+working.
+
+### Scope: the caller's own account, and only that
+
+`GET /auth/sessions` and `DELETE /auth/sessions/{id}` are scoped to the
+current user, the same boundary `/auth/logout-all` already drew — there is
+no admin capability here to see or revoke another user's sessions, which
+would have been a materially larger authorization surface than the gap
+actually asked to close. Revoking a session that belongs to someone else
+returns 404, not 403 — the same non-disclosure `require_membership` already
+uses for another organization's resource, so a caller with no legitimate
+reason to know cannot tell "not yours" from "does not exist" here either.
+
+### Proven at the level that would have caught a fake fix
+
+`tests/security/test_sessions.py`'s central test does not stop at the
+session disappearing from `GET /auth/sessions` — it asserts the token
+itself is refused afterward. Verified to fail exactly the way a
+row-only "fix" would: with `revoke_session` updated to set `revoked_at`
+without calling `revocation.revoke`, the row vanishes from the list but the
+token keeps authenticating, which is precisely the gap between "looks
+revoked" and "is revoked" this test exists to close. Also covers: each
+login adding a distinct row rather than overwriting one; revoking your own
+current session working exactly like `/auth/logout`, with no special case
+that makes the general endpoint weaker for the one session most likely to
+be revoked by mistake; a nonexistent session id returning 404 rather than
+500; and `/auth/logout-all` clearing the listing, not only the underlying
+authorization already covered end to end in `tests/security/test_revocation.py`.
+
+### Deferrals
+
+- **No admin visibility into another user's sessions** — deliberately out of
+  scope, per the boundary above.
+- **No client (CLI or dashboard) surfaces this yet.** The API is the
+  complete answer today, the same stated position `docs/security-review.md`
+  took for dashboard pagination before that gap had its own UI built.

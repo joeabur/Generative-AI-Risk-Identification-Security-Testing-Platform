@@ -24,6 +24,7 @@ from app.models import (  # noqa: F401 - registers metadata
     SyntheticAccount,
     Target,
     User,
+    UserSession,
 )
 
 config = context.config

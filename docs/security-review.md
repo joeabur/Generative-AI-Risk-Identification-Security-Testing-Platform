@@ -156,7 +156,6 @@ Stated plainly, because a review that lists only strengths is marketing.
 | Gap | Consequence |
 |---|---|
 | Rate limiting fails open when Redis is unavailable | Guessing is then bounded only by Argon2's cost; logged at error level, alert on it |
-| No visibility into active sessions, and no per-session revocation by name | Only "this session" (`/auth/logout`) or "every session" (`/auth/logout-all`) is expressible |
 | Evidence encryption at rest is opt-in, not the default | `AEGIS_EVIDENCE_ENCRYPTION_KEY` unset (the out-of-the-box state) means a bundle is protected only by filesystem permissions and redaction, same as before this existed |
 | No signature verification for plugins | The allowlist and an optional hash are the controls |
 | Malware scanning of dependencies absent | Container, licence, EOL and name-confusion analysis exist; nothing checks a package for a malicious payload |
@@ -588,4 +587,41 @@ one page's worth of matching rows plus one more and asserting the extra
 row appears on page 2, under a filter, and nowhere on page 1. Verified to
 fail (page 2 duplicating page 1) with `.offset()` reverted, before
 restoring the fix.
+
+## Session visibility and revocation by name
+
+The last row this report carried under "what is not covered": only "this
+session" (`/auth/logout`) or "every session" (`/auth/logout-all`) was
+expressible. `docs/revocation.md`'s own account of that design said why
+plainly — "this platform does not track which tokens exist, only which are
+dead" — because a per-user cutoff needs neither. Closing this meant giving
+up that simplicity deliberately: a new `user_sessions` table
+(`app/models/user_session.py`) now records one row per issued token, and
+`GET /auth/sessions` / `DELETE /auth/sessions/{id}` read and act on it.
+
+**The table is a record for a human to read, not a second authorization
+decision.** Revoking a session still means writing its `jti` to
+`app/core/revocation/`'s deny-list — the exact mechanism `/auth/logout`
+already used — and the new endpoint's own docstring says so: losing this
+table (a botched restore, a truncated table) makes past sessions invisible,
+but revokes nothing that was already revoked and un-revokes nothing that
+was not, because the deny-list and `users.tokens_valid_after` are what a
+request is actually checked against. `/auth/logout-all` was deliberately
+left as a bulk cutover rather than rewritten as a loop over tracked rows —
+the cutoff invalidates a token by *when* it was issued, which still works
+for a token whose row was lost and for one issued the instant before the
+request commits, neither of which a loop over rows fetched slightly
+earlier could reach.
+
+Scoped to the caller's own account, the same boundary `/auth/logout-all`
+already drew — there is no admin view here of another user's sessions.
+Revoking someone else's session by id returns 404, the same non-disclosure
+`require_membership` already uses for another organization's resource.
+
+Proven at the level that matters: `tests/security/test_sessions.py`'s
+central test does not stop at the row disappearing from the list, it
+checks the token itself is refused afterward — verified to fail with
+`revoke_session` updating only `revoked_at` and never calling
+`revocation.revoke`, which would leave the list looking right while the
+token underneath kept working, before restoring the real fix.
 

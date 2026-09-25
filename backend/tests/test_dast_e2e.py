@@ -96,8 +96,9 @@ def context(*, allow_state_mutation: bool = False, max_requests: int = 300) -> R
         excluded_domains=(),
         # The deliberate opt-in: the lab is on loopback, which the engine blocks
         # by default. That default is correct, and this is how a real engagement
-        # would widen it.
-        allowed_ip_ranges=("127.0.0.0/8",),
+        # would widen it. Both families: "localhost" can resolve to either,
+        # and the runner's resolution order isn't something this test controls.
+        allowed_ip_ranges=("127.0.0.0/8", "::1/128"),
         allowed_paths=(),
         excluded_paths=(),
         allowed_methods=("GET",),

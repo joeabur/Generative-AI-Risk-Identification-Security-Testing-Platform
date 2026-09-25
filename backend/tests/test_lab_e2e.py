@@ -8,10 +8,12 @@ real connection. It is the only test that exercises the whole path, which is
 why §19 says the lab "doubles as the integration-test fixture".
 
 It runs on loopback, which the scope engine blocks by default — so the target's
-Rules of Engagement have to list `127.0.0.0/8` explicitly. That is not a
-workaround: it is the same opt-in an operator makes to scan the lab on its
-internal Docker network, and it is worth exercising, because "the operator
-deliberately allowed a private range" is a path with real consequences.
+Rules of Engagement have to list `127.0.0.0/8` (and `::1/128`, since
+`localhost` may resolve to either family depending on the host) explicitly.
+That is not a workaround: it is the same opt-in an operator makes to scan the
+lab on its internal Docker network, and it is worth exercising, because "the
+operator deliberately allowed a private range" is a path with real
+consequences.
 
 Marked `lab_e2e` so it can be selected on its own (`pytest -m lab_e2e`), which
 is what `.github/workflows/lab-e2e.yml` does.
@@ -198,7 +200,9 @@ async def _configure(client: AsyncClient, password: str, base_url: str) -> tuple
             "excluded_domains": [],
             # The deliberate opt-in. Without it the scope engine refuses every
             # request to the lab, which is the default and the right default.
-            "allowed_ip_ranges": ["127.0.0.0/8"],
+            # Both families: "localhost" can resolve to either, and the
+            # runner's resolution order isn't something this test controls.
+            "allowed_ip_ranges": ["127.0.0.0/8", "::1/128"],
             "allowed_paths": [],
             "excluded_paths": [],
             "allowed_methods": ["GET", "POST"],

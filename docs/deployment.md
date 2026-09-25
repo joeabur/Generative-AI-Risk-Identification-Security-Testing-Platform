@@ -1,5 +1,10 @@
 # Deployment
 
+For running this beyond a single machine or Compose stack — a cloud-hosted
+deployment handling many organizations and concurrent assessments — see
+[`docs/scaling-architecture.md`](scaling-architecture.md), which builds on
+everything below rather than replacing it.
+
 ## Components
 
 | Process | Scale | Needs |
@@ -95,7 +100,8 @@ un-migrated database is the failure mode to avoid.
 
 ## What is not provided
 
-- No Helm chart or Kubernetes manifests.
+- No Helm chart or Kubernetes manifests — `docs/scaling-architecture.md` has
+  an illustrative, unexercised sketch, not a shipped one.
 - No Terraform.
 - No multi-region or HA guidance beyond "run more replicas".
 - No SSO/SAML/OIDC — local accounts only.

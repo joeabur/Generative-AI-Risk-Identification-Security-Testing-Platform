@@ -32,10 +32,14 @@ jobs:
       - run: pip install pip-audit
       - name: pip-audit
         # The installed set, not just the declarations, so a transitive
-        # dependency cannot hide behind a clean manifest.
+        # dependency cannot hide behind a clean manifest. --skip-editable
+        # excludes this project's own editable install: it is not published
+        # to PyPI, so --strict otherwise treats "not found" as a collection
+        # failure and fails the job for a reason unrelated to any real
+        # advisory.
         run: |
           pip install -e ".[dev,appsec]"
-          pip-audit --strict --progress-spinner off
+          pip-audit --strict --skip-editable --progress-spinner off
 
   node:
     runs-on: ubuntu-latest

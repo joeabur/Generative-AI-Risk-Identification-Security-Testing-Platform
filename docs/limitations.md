@@ -8,7 +8,6 @@ users to assume it has none.
 
 | Not covered | Why |
 |---|---|
-| **DAST / crawling** | The API engine works from an uploaded OpenAPI document. A scope-gated crawler is Phase 15 |
 | **Business logic abuse** | Whether a workflow can be misused in a way the spec permits is not something a generic probe can decide |
 | **Client-side / browser security** | No DOM, no JavaScript execution, no XSS-in-browser verification |
 | **Authentication protocol flaws** | OAuth/OIDC/SAML implementation weaknesses are not probed |
@@ -18,6 +17,14 @@ users to assume it has none.
 | **Multi-turn agentic exploitation** | Probes are single or few-turn. A long adversarial conversation is not simulated |
 
 ## Where the results are weaker than they look
+
+**DAST runs under safe mode and is not gated at the socket.** The scope-gated
+crawler and the Nuclei/ZAP adapters exist, but safe mode does not exercise
+state-changing behaviour (see below), and unlike every other outbound path on
+this platform, these two third-party scanners open their own connections
+rather than going through the scope-gated transport — `docs/security-review.md`
+names this explicitly. Treat a DAST finding as real; treat a DAST *clean
+result* as "nothing state-changing was tried", not as "nothing is wrong".
 
 **Coverage depends entirely on configuration.** No OpenAPI document means almost
 no API findings. No synthetic accounts means no BOLA or function-level
@@ -82,8 +89,12 @@ to skim past in a long report.
   cross-organization correlation, by design.
 - No per-channel notification rate limiting: a run that promotes fifty new
   criticals sends fifty messages.
-- The web UI covers authentication only; everything else is API or CLI until
-  Phase 17.
+- The web dashboard (`docs/dashboard.md`) is read-only — overview, findings,
+  runs, workflows and targets — by scope decision, not by section missing.
+  It has no pagination-free cap left either: findings and runs both page
+  past their first 50 rows. Starting a run, changing a finding's status and
+  everything else that writes is API or CLI only; the dashboard shows the
+  disabled action and the call that does it.
 - `docker compose up --build` is written but unverified — see
   `docs/installation.md`.
 

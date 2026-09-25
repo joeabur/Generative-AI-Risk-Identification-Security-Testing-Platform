@@ -8,7 +8,7 @@ All notable changes to this project are recorded here. The format follows
 
 Nothing yet.
 
-## [0.1.0] — 2026-09-20
+## [0.1.0] — 2026-09-25
 
 First release. A working, authorized-testing AI and API security platform with
 an enforced safety boundary, measured findings, sealed evidence, and honest
@@ -29,6 +29,23 @@ reports.
 - Cloud metadata addresses refused unconditionally and not allowlistable.
 - Redis-backed kill switch, honoured across processes.
 - Append-only, hash-chained audit log mirrored from a file log.
+- Scope-gated crawler and Nuclei/ZAP DAST adapters under safe mode (see
+  `docs/limitations.md` for the one place DAST does not go through the
+  gated transport).
+
+### Account security
+
+- Login and registration rate-limited on two dimensions (per-IP and
+  per-identity), fail-open on Redis unavailability with Argon2id standing
+  behind it either way.
+- CSRF protection for every cookie-authenticated write, including a
+  pre-session anonymous token (`docs/csrf.md`) so login and registration
+  are covered too, not only requests made after one exists.
+- Server-side JWT revocation: `/auth/logout` kills one token by its `jti`,
+  `/auth/logout-all` kills every token issued before a durable Postgres
+  cutoff. `GET /auth/sessions` lists what is currently active and
+  `DELETE /auth/sessions/{id}` revokes one specific *other* session by
+  name (`docs/revocation.md`).
 
 ### Engines
 
@@ -51,9 +68,20 @@ reports.
 - Finding lifecycle with a restricted transition table, a remediation board, and
   a retest workflow reporting reproduced / not reproduced / **not tested**.
 - Evidence redacted *before* it is written, content-addressed and hash-chained;
-  verification re-walks the chain and re-hashes the files.
+  verification re-walks the chain and re-hashes the files. Encryption at rest
+  is opt-in (`AEGIS_EVIDENCE_ENCRYPTION_KEY`, AES-256-GCM) — unset, a bundle is
+  protected by filesystem permissions and redaction alone, same as before this
+  existed (`docs/configuration.md`).
 - Reports in Markdown, HTML, PDF, JSON, SARIF 2.1.0 and CSV, in four audience
   templates, each naming the framework categories that were **not** tested.
+
+### Dashboard
+
+- A read-only, server-rendered dashboard (`/app`) — overview, findings, runs,
+  workflows, targets — authenticated by the same session cookie as the API,
+  scoped by the same membership check. Findings and runs both page past their
+  first 50 rows. Every visible write action is a disabled control naming the
+  API or CLI call that performs it, not a hidden button.
 
 ### CI/CD and integrations
 
@@ -86,9 +114,11 @@ reports.
 
 Stated rather than discovered later; the full list is in `docs/limitations.md`.
 
-- No DAST or crawler (Phase 15); no browser, no client-side testing.
-- The web UI covers authentication only; everything else is API or CLI
-  (Phase 17).
+- DAST exists (a scope-gated crawler, Nuclei and ZAP under safe mode) but is
+  not gated at the socket the way every other outbound path is — the two
+  scanners open their own connections. No browser, no client-side testing.
+- The dashboard is read-only by scope decision; every write is API or CLI
+  only.
 - `docker compose up --build` is written but **unverified** — image pulls were
   blocked in the build environment. The direct-run path is verified end to end.
 - No RASP agent, by decision (Phase 18 is extension points only).
@@ -97,7 +127,17 @@ Stated rather than discovered later; the full list is in `docs/limitations.md`.
 - SMTP is adjudicated by the scope engine but not carried by the gated
   transport.
 - Plugins are not sandboxed; the allowlist is the control.
-- Evidence is unencrypted at rest; no rate limiting on the platform's own API.
+- Evidence encryption at rest is opt-in, not the default; unset, filesystem
+  permissions and redaction are what protect a bundle.
+- Rate limiting covers login and registration only — no general throttling
+  on the rest of the platform's own API.
+- No malicious-payload scanning of dependencies; container/licence/EOL/
+  name-confusion analysis exist, nothing checks a package for a malicious
+  payload.
+- No signature verification for plugins, and no container image signing —
+  images are scanned, none is published or signed.
+- No admin visibility into another user's sessions; `GET /auth/sessions` and
+  `DELETE /auth/sessions/{id}` are scoped to the caller's own account.
 
 [Unreleased]: https://github.com/joeabur/Generative-AI-Risk-Identification-Security-Testing-Platform/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/joeabur/Generative-AI-Risk-Identification-Security-Testing-Platform/releases/tag/v0.1.0

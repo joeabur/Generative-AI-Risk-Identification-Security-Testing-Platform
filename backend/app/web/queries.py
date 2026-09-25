@@ -319,6 +319,7 @@ async def targets_for(
         valid_from,
         valid_until,
         allowed_domains,
+        *_,
     ) in result.all():
         if valid_from is None or valid_until is None:
             state = "none"

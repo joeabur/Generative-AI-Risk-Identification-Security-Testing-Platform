@@ -19,6 +19,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}Aegis AI Security{% endblock %}</title>
+{# No icon file is served, and none should be fetched from anywhere else —
+   same reasoning as the missing CDN script tag above. Without this, every
+   browser issues its own GET /favicon.ico, which 404s and surfaces as a
+   console error on every page for no reason. #}
+<link rel="icon" href="data:,">
 {% if htmx_available %}<script src="/app/static/htmx.min.js" defer></script>{% endif %}
 <style>
 :root {

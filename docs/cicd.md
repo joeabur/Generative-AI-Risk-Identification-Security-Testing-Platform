@@ -131,6 +131,26 @@ Scopes:
 Keys record `last_used_at`, so you can find the ones nothing is using and
 revoke them.
 
+## Finishing a target's configuration
+
+`target add` only creates the target row. Rules of engagement, the adapter,
+the code scope and the runtime-protection declaration are each their own
+resource, matching the API:
+
+```bash
+aegis-ai target roe --target "$TARGET_ID" --file roe.yaml                 # admin
+aegis-ai target adapter --target "$TARGET_ID" --file adapter.yaml         # security engineer
+aegis-ai target code --target "$TARGET_ID" --file code.yaml               # admin
+aegis-ai target runtime-protection --target "$TARGET_ID" --file rp.yaml   # admin
+```
+
+`adapter` is the one of the four a CI credential (`scan` scope) can call —
+it configures how the platform talks to the target, not whether testing it
+is authorized. `roe`, `code`, and `runtime-protection` need an admin
+session (`aegis-ai login`), same as `auth grant` above: each is a claim
+someone accountable is making about scope or protection, not a pipeline
+setting.
+
 ## Typical pipeline shapes
 
 **Gate an existing run** (the scan runs on a schedule; the pipeline only

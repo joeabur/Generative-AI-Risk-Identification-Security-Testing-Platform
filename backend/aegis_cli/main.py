@@ -149,6 +149,54 @@ def cmd_target_add(args: argparse.Namespace, profile: Profile) -> ExitCode:
     return ExitCode.PASS
 
 
+def cmd_target_roe(args: argparse.Namespace, profile: Profile) -> ExitCode:
+    org = _org(args, profile)
+    _emit(
+        _client(profile).request(
+            "PUT",
+            f"/organizations/{org}/targets/{args.target}/rules-of-engagement",
+            json_body=_read_yaml(args.file),
+        )
+    )
+    return ExitCode.PASS
+
+
+def cmd_target_adapter(args: argparse.Namespace, profile: Profile) -> ExitCode:
+    org = _org(args, profile)
+    _emit(
+        _client(profile).request(
+            "PUT",
+            f"/organizations/{org}/targets/{args.target}/adapter",
+            json_body=_read_yaml(args.file),
+        )
+    )
+    return ExitCode.PASS
+
+
+def cmd_target_code(args: argparse.Namespace, profile: Profile) -> ExitCode:
+    org = _org(args, profile)
+    _emit(
+        _client(profile).request(
+            "PUT",
+            f"/organizations/{org}/targets/{args.target}/code",
+            json_body=_read_yaml(args.file),
+        )
+    )
+    return ExitCode.PASS
+
+
+def cmd_target_runtime_protection(args: argparse.Namespace, profile: Profile) -> ExitCode:
+    org = _org(args, profile)
+    _emit(
+        _client(profile).request(
+            "PUT",
+            f"/organizations/{org}/targets/{args.target}/runtime-protection",
+            json_body=_read_yaml(args.file),
+        )
+    )
+    return ExitCode.PASS
+
+
 def cmd_auth_grant(args: argparse.Namespace, profile: Profile) -> ExitCode:
     org = _org(args, profile)
     _emit(
@@ -553,6 +601,24 @@ def _parser() -> argparse.ArgumentParser:
     add = target.add_parser("add")
     add.add_argument("--config", required=True, help="YAML describing the target")
     add.set_defaults(handler=cmd_target_add)
+    roe = target.add_parser("roe", help="set rules of engagement")
+    roe.add_argument("--target", required=True)
+    roe.add_argument("--file", required=True, help="YAML rules-of-engagement record")
+    roe.set_defaults(handler=cmd_target_roe)
+    adapter = target.add_parser("adapter", help="set which adapter speaks to this target")
+    adapter.add_argument("--target", required=True)
+    adapter.add_argument("--file", required=True, help="YAML adapter configuration")
+    adapter.set_defaults(handler=cmd_target_adapter)
+    code = target.add_parser("code", help="declare the source-code surface (admin)")
+    code.add_argument("--target", required=True)
+    code.add_argument("--file", required=True, help="YAML code-scope configuration")
+    code.set_defaults(handler=cmd_target_code)
+    runtime_protection = target.add_parser(
+        "runtime-protection", help="declare claimed runtime controls (admin)"
+    )
+    runtime_protection.add_argument("--target", required=True)
+    runtime_protection.add_argument("--file", required=True, help="YAML runtime-protection record")
+    runtime_protection.set_defaults(handler=cmd_target_runtime_protection)
 
     auth = subparsers.add_parser("auth", help="authorization grants").add_subparsers(dest="action")
     grant = auth.add_parser("grant")

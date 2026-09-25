@@ -6,7 +6,17 @@ All notable changes to this project are recorded here. The format follows
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- `aegis-ai target roe|adapter|code|runtime-protection` — a full audit pass
+  found `target add` and `auth grant` covered by the CLI but the four
+  PUT endpoints that finish configuring a target (rules of engagement, the
+  adapter, the code scope, the runtime-protection declaration) had no CLI
+  command at all, leaving no sanctioned way to complete a target's setup
+  short of raw HTTP calls.
+- The dashboard's base template requested no favicon, so every page load
+  issued an unanswered `GET /favicon.ico` that surfaced as a browser console
+  error; an explicit no-op `<link rel="icon">` suppresses the request.
 
 ## [0.1.0] — 2026-09-25
 

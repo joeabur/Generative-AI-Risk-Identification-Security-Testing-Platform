@@ -268,6 +268,10 @@ complete list of what is still deferred.
   stated plainly.
 - [`docs/deployment.md`](docs/deployment.md) and
   [`docs/troubleshooting.md`](docs/troubleshooting.md).
+- [`docs/scaling-architecture.md`](docs/scaling-architecture.md) — the next
+  step up: a reference architecture, component-by-component scaling design,
+  and setup path for a cloud-hosted deployment handling many organizations
+  and concurrent assessments.
 - [`docs/third-party.md`](docs/third-party.md) — every integrated tool, its
   licence and how it is used.
 - [`docs/decisions/`](docs/decisions/) — architecture decision records.

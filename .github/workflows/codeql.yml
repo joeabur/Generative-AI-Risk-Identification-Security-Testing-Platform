@@ -15,9 +15,12 @@ jobs:
   analyze:
     runs-on: ubuntu-latest
     permissions:
-      # The narrowest set CodeQL needs to upload its results.
+      # The narrowest set CodeQL needs to upload its results. actions:read
+      # is for the action's own workflow-run lookup, not for this workflow
+      # reading anyone else's runs.
       contents: read
       security-events: write
+      actions: read
     strategy:
       fail-fast: false
       matrix:
@@ -31,7 +34,7 @@ jobs:
 
       - uses: github/codeql-action/init@v3
         with:
-          language: ${{ matrix.language }}
+          languages: ${{ matrix.language }}
           queries: security-extended
 
       - uses: github/codeql-action/analyze@v3

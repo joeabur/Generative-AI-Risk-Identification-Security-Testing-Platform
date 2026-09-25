@@ -47,7 +47,7 @@ async def test_register_duplicate_email_rejected(client: AsyncClient, strong_pas
 async def test_register_rejects_weak_password(client: AsyncClient) -> None:
     response = await client.post(
         "/api/v1/auth/register",
-        # pragma: allowlist secret
+        # pragma: allowlist nextline secret
         json={"email": "weak@example.test", "full_name": "Weak", "password": "short"},
         headers=await _anon_headers(client),
     )
@@ -83,7 +83,7 @@ async def test_login_with_wrong_password_rejected(
     )
     response = await client.post(
         "/api/v1/auth/login",
-        # pragma: allowlist secret
+        # pragma: allowlist nextline secret
         json={"email": "dave@example.test", "password": "wrong-password-entirely"},
         headers=headers,
     )
@@ -93,7 +93,7 @@ async def test_login_with_wrong_password_rejected(
 async def test_login_with_unknown_email_rejected(client: AsyncClient) -> None:
     response = await client.post(
         "/api/v1/auth/login",
-        # pragma: allowlist secret
+        # pragma: allowlist nextline secret
         json={"email": "ghost@example.test", "password": "whatever-12345"},
         headers=await _anon_headers(client),
     )

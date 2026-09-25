@@ -325,7 +325,7 @@ async def test_repeated_bad_passwords_are_eventually_refused_with_retry_after(
     for _ in range(30):
         response = await client.post(
             "/api/v1/auth/login",
-            # pragma: allowlist secret
+            # pragma: allowlist nextline secret
             json={"email": "rl-victim@example.test", "password": "wrong-password-entirely"},
             headers=headers,
         )
@@ -403,7 +403,7 @@ async def test_a_successful_login_after_failures_is_not_throttled(
     for _ in range(5):
         await client.post(
             "/api/v1/auth/login",
-            # pragma: allowlist secret
+            # pragma: allowlist nextline secret
             json={"email": "rl-typo@example.test", "password": "mistyped"},
             headers=headers,
         )

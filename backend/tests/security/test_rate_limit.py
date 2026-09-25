@@ -419,6 +419,7 @@ async def test_a_successful_login_after_failures_is_not_throttled(
     # the limit immediately.
     again = await client.post(
         "/api/v1/auth/login",
+        # pragma: allowlist nextline secret
         json={"email": "rl-typo@example.test", "password": "mistyped"},
         headers=headers,
     )

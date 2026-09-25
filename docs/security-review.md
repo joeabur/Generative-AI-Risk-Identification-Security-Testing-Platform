@@ -94,7 +94,7 @@ bundle discloses none of them.
 
 Two real defects came out of that test:
 
-- the patterns anchored on `\b`, so `AKIAIOSFODNN7EXAMPLE0` — a complete AWS key
+- the patterns anchored on `\b`, so `AKIAIOSFODNN7EXAMPLE0` — a complete AWS key <!-- pragma: allowlist secret -->
   id plus one character — passed through unredacted. Adjacency is no longer a
   way past the detector;
 - a run's canary is random, so whether it happened to clear the entropy

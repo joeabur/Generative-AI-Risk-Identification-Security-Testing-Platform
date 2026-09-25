@@ -16,7 +16,7 @@ SECRETS = [
     "ghp_abcdefghijklmnopqrstuvwxyz0123456789",
     "xoxb-1234567890-abcdefghijkl",
     "sk-proj-abcdefghijklmnopqrstuvwxyz12",
-    "-----BEGIN RSA PRIVATE KEY-----",
+    "-----BEGIN RSA PRIVATE KEY-----",  # pragma: allowlist secret
 ]
 
 

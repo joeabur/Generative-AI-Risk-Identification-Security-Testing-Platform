@@ -721,7 +721,7 @@ Decisions worth stating:
   bundle builder and the store all pass the run's markers through it.
 - **Word boundaries came out of the secret patterns.** The property test
   defeated the old `\b(?:AKIA|ASIA)[0-9A-Z]{16}\b` in one line:
-  `AKIAIOSFODNN7EXAMPLE0` contains a complete AWS key id, but the trailing
+  `AKIAIOSFODNN7EXAMPLE0` contains a complete AWS key id, but the trailing <!-- pragma: allowlist secret -->
   `\b` fails against the extra character and the value passed through
   unredacted. Adjacency must not be a way to smuggle a credential past the
   detector, so the issuer prefixes anchor each match and the quantifiers are

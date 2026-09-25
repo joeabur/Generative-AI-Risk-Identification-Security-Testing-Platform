@@ -54,7 +54,7 @@ class RedactionResult:
 #
 # **No word boundaries, deliberately.** An earlier version anchored each of
 # these with `\b` and a fixed length, which a property test defeated in one
-# line: `AKIAIOSFODNN7EXAMPLE0` contains a complete AWS key id, but the
+# line: `AKIAIOSFODNN7EXAMPLE0` contains a complete AWS key id, but the  # pragma: allowlist secret
 # trailing `\b` fails against the extra character and the whole value passed
 # through unredacted. Adjacency must not be a way to smuggle a credential
 # past the detector, so the prefixes anchor the match and the trailing

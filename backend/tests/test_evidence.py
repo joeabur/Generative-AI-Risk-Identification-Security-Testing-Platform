@@ -42,7 +42,9 @@ SECRETS = [
     "sk_live_" + "d" * 24,
     "xoxb-1234567890-abcdefghij",
     "postgresql://aegis:sup3rs3cretpassw0rd@db.internal:5432/app",
+    # pragma: allowlist secret
     "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1g",
+    # pragma: allowlist secret
     "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA\n-----END RSA PRIVATE KEY-----",
 ]
 

@@ -532,7 +532,7 @@ GITLEAKS_REPORT = [
         # A real-looking value on purpose. Gitleaks `--redact` would have
         # replaced it, but the adapter must not depend on a flag staying set in
         # a future release, so the unredacted path is what gets tested.
-        "Secret": "AKIAIOSFODNN7EXAMPLE",
+        "Secret": "AKIAIOSFODNN7EXAMPLE",  # pragma: allowlist secret
         "Match": "aws_key = AKIAIOSFODNN7EXAMPLE",
     },
     {

@@ -106,11 +106,11 @@ Every call below was executed against the running stack. The full script is
 JAR=$(mktemp)
 curl -s -c "$JAR" localhost:8000/api/v1/auth/csrf -o /dev/null
 CSRF=$(awk -F'\t' '$6 ~ /aegis_csrf_anon$/ {print $7}' "$JAR")
-TOKEN=$(curl -s -b "$JAR" localhost:8000/api/v1/auth/register \
+REGISTER_RESPONSE=$(curl -s -b "$JAR" localhost:8000/api/v1/auth/register \
   -H 'content-type: application/json' \
   -H "x-csrf-token: $CSRF" \
-  -d '{"email":"you@example.test","full_name":"You","password":"Correct-Horse-Battery-Staple-9"}' \
-  | python3 -c 'import json,sys;print(json.load(sys.stdin)["access_token"])')
+  -d '{"email":"you@example.test","full_name":"You","password":"Correct-Horse-Battery-Staple-9"}')  # pragma: allowlist secret
+TOKEN=$(echo "$REGISTER_RESPONSE" | python3 -c 'import json,sys;print(json.load(sys.stdin)["access_token"])')
 rm -f "$JAR"
 AUTH="authorization: Bearer $TOKEN"
 

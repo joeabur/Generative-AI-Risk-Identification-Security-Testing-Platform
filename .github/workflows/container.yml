@@ -45,7 +45,7 @@ jobs:
         run: docker build -f ${{ matrix.dockerfile }} -t aegis-${{ matrix.name }}:ci ${{ matrix.context }}
 
       - name: Trivy — vulnerabilities
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: aegis-${{ matrix.name }}:ci
           severity: ${{ matrix.severity }}
@@ -54,7 +54,7 @@ jobs:
           format: table
 
       - name: Trivy — misconfiguration and secrets in the image
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: aegis-${{ matrix.name }}:ci
           scanners: misconfig,secret

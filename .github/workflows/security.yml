@@ -64,4 +64,16 @@ jobs:
         # records those decisions (as hashes, never as values) so this step
         # fails only on something new. Re-audit it with
         # `detect-secrets audit .secrets.baseline`.
-        run: detect-secrets-hook --baseline .secrets.baseline $(git ls-files)
+        #
+        # On a line-number-drift failure (exit 3), the hook rewrites the
+        # baseline on disk but that copy is discarded with the runner — so
+        # "please git add" names no diff to act on. Show it before exiting,
+        # so the fix is the printed hunk, not a guess.
+        run: |
+          detect-secrets-hook --baseline .secrets.baseline $(git ls-files) || {
+            code=$?
+            echo "::group::.secrets.baseline diff detect-secrets-hook wants"
+            git --no-pager diff .secrets.baseline
+            echo "::endgroup::"
+            exit "$code"
+          }

@@ -23,6 +23,10 @@ jobs:
       matrix:
         language: [python, javascript-typescript]
     steps:
+      # Deliberately not pinned to the PR head (unlike this repo's other
+      # workflows): CodeQL's own guidance is to analyze the pull_request
+      # event's default merge-with-base commit, so an alert reflects the
+      # code as it will actually land, not the branch in isolation.
       - uses: actions/checkout@v4
 
       - uses: github/codeql-action/init@v3

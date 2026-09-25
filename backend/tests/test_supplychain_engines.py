@@ -1,10 +1,11 @@
-"""Supply-chain engines: licences, end-of-life runtimes, name confusion.
+"""Supply-chain engines: licences, end-of-life runtimes, name confusion, malware.
 
 These engines answer questions an advisory database cannot, which also means
 there is no CVE to check them against. So the tests are mostly about restraint:
 that an unknown licence is not called permissive, that an unlisted runtime is
 not called supported, and that a name-similarity signal is never presented as
-malware.
+malware — while the malware engine, the one case here that *is* checked
+against a curated advisory feed, gets to say the word.
 """
 
 from datetime import date
@@ -18,6 +19,9 @@ from app.core.appsec.supplychain.eol import AS_OF, is_end_of_life, lookup
 from app.core.appsec.supplychain.eol_engine import EndOfLifeRuntimeEngine
 from app.core.appsec.supplychain.license_engine import LicenseRiskEngine
 from app.core.appsec.supplychain.licenses import LicenseRisk, classify, from_classifier
+from app.core.appsec.supplychain.malware import AS_OF as MALWARE_AS_OF
+from app.core.appsec.supplychain.malware import lookup as malware_lookup
+from app.core.appsec.supplychain.malware_engine import MaliciousPackageEngine
 from app.core.appsec.supplychain.manifests import (
     Dependency,
     base_images,
@@ -306,6 +310,89 @@ async def test_name_confusion_says_it_consulted_no_registry() -> None:
     assert "No registry was consulted" in finding.description
 
 
+# --- malware -------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("ecosystem", "name", "should_match"),
+    [
+        ("pypi", "my-private-pkg", True),
+        # Case and separator variance must not hide a real match.
+        ("pypi", "My_Private_Pkg", True),
+        ("npm", "wallet-connect-adapter", True),
+        # A scoped npm name is still the package the advisory names.
+        ("npm", "@alphaspace/core", True),
+        # The wrong ecosystem must not borrow a match from the other one.
+        ("npm", "my-private-pkg", False),
+        # A real, unrelated package is not in the table.
+        ("pypi", "requests", False),
+        ("npm", "lodash", False),
+    ],
+)
+def test_malware_lookup_matches_by_normalized_name_and_ecosystem(
+    ecosystem: str, name: str, should_match: bool
+) -> None:
+    assert (malware_lookup(ecosystem, name) is not None) is should_match
+
+
+def test_malware_lookup_absence_is_not_a_clean_bill() -> None:
+    """`None` means "not in this vendored sample" — the engine, not this
+    function, is responsible for saying so; this function must not appear to
+    make a claim of its own by, say, returning a sentinel that looks like a
+    verdict."""
+    assert malware_lookup("pypi", "some-package-nobody-has-heard-of") is None
+
+
+async def test_malware_engine_flags_a_dependency_matching_a_published_advisory(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "requirements.txt").write_text(
+        "my-private-pkg==1.0.0\nrequests==2.32.3\n", encoding="utf-8"
+    )
+    engine_workspace = resolve_workspace(
+        tmp_path,
+        CodeScope(allowed_paths=("requirements.txt",)),
+        build_manifest_paths=("requirements.txt",),
+    )
+
+    engine = MaliciousPackageEngine()
+    assert engine.applies_to(engine_workspace)
+    results = await engine.run(engine_workspace)
+
+    matched = [result for result in results if result.id == "AEGIS-SUPPLY-040"]
+    assert len(matched) == 1, ids(results)
+    finding = matched[0]
+    assert "my-private-pkg" in finding.title
+    assert "GHSA-v7x9-wx5x-qrpp" in finding.evidence
+    assert finding.severity is Severity.CRITICAL
+    assert finding.confidence is Confidence.HIGH
+    # The clean dependency alongside it must not be swept in.
+    assert "requests" not in finding.evidence
+
+
+async def test_malware_engine_always_emits_a_coverage_note() -> None:
+    """Even a run with no match must say what was actually checked, so a clean
+    result cannot be read as "confirmed safe"."""
+    results = await MaliciousPackageEngine().run(workspace())
+    note = next(result for result in results if result.id == "AEGIS-SUPPLY-041")
+    assert note.severity is Severity.INFORMATIONAL
+    assert "not a statement that it is clean" in note.description
+    assert MALWARE_AS_OF.isoformat() in note.description
+
+
+async def test_malware_engine_dedupes_repeated_declarations(tmp_path: Path) -> None:
+    (tmp_path / "requirements.txt").write_text(
+        "my-private-pkg==1.0.0\nmy-private-pkg==1.0.0\n", encoding="utf-8"
+    )
+    engine_workspace = resolve_workspace(
+        tmp_path,
+        CodeScope(allowed_paths=("requirements.txt",)),
+        build_manifest_paths=("requirements.txt",),
+    )
+    results = await MaliciousPackageEngine().run(engine_workspace)
+    assert len([r for r in results if r.id == "AEGIS-SUPPLY-040"]) == 1
+
+
 # --- container ---------------------------------------------------------------
 
 
@@ -339,19 +426,25 @@ def test_the_new_engines_are_registered() -> None:
         "appsec.supplychain.eol",
         "appsec.supplychain.license",
         "appsec.supplychain.name_confusion",
+        "appsec.supplychain.malware",
         "appsec.container.trivy",
     } <= registered
 
 
 def test_no_supply_chain_engine_reaches_the_network() -> None:
-    """Three of the four are file-only by design, and the fourth runs its tool
+    """Four of the five are file-only by design, and the fifth runs its tool
     offline. Pinned because adding a lookup would be a disclosure decision, not
     an implementation detail."""
     import inspect
 
-    from app.core.appsec.supplychain import eol_engine, license_engine, typosquat_engine
+    from app.core.appsec.supplychain import (
+        eol_engine,
+        license_engine,
+        malware_engine,
+        typosquat_engine,
+    )
 
-    for module in (eol_engine, license_engine, typosquat_engine):
+    for module in (eol_engine, license_engine, typosquat_engine, malware_engine):
         source = inspect.getsource(module)
         assert "run_tool" not in source, module.__name__
         assert "GatedTransport" not in source, module.__name__

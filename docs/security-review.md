@@ -158,7 +158,6 @@ Stated plainly, because a review that lists only strengths is marketing.
 | Rate limiting fails open when Redis is unavailable | Guessing is then bounded only by Argon2's cost; logged at error level, alert on it |
 | Evidence encryption at rest is opt-in, not the default | `AEGIS_EVIDENCE_ENCRYPTION_KEY` unset (the out-of-the-box state) means a bundle is protected only by filesystem permissions and redaction, same as before this existed |
 | No signature verification for plugins | The allowlist and an optional hash are the controls |
-| Malware scanning of dependencies absent | Container, licence, EOL and name-confusion analysis exist; nothing checks a package for a malicious payload |
 | DAST scanners are not gated at the socket | Nuclei and ZAP open their own connections — see the Phase 15 section below |
 | Advisory lookup off by default | SCA reports what is installed, not what is vulnerable, unless enabled |
 | No inbound webhook endpoint | Workflows and PR publishing are driven by CI, never by an event from a code host |
@@ -171,6 +170,29 @@ were closed, not because they got quieter: container, licence and end-of-life
 scanning landed with the Aikido-parity engines; DAST landed in Phase 15 (with
 its own, narrower gap now listed above); and `mapping_versions` is populated
 from pinned framework editions as of Phase 13.
+
+### Malware scanning of dependencies
+
+Closed, at the scope stated below. `appsec.supplychain.malware`
+(`app/core/appsec/supplychain/malware_engine.py`) matches declared dependency
+names against `malware.py`, a vendored snapshot of published GHSA "type:
+malware" advisories (25 PyPI, 25 npm, compiled 2026-09-25 from
+`github.com/advisories?query=type:malware`). A match is reported at CRITICAL —
+this is a name match against a curated, already-confirmed report, not the
+name-similarity signal `typosquat_engine.py` reports, so unlike that engine
+this one is allowed to use the word "malware".
+
+The honest limit, stated on every run whether or not it finds anything: the
+table is a few dozen entries against a real feed's tens of thousands, so
+absence means "not in this small sample", never "checked and safe" — the
+same distinction `eol_engine.py` draws for a runtime outside its table. This
+is a vendored, offline mechanism, not a live feed; a deployment that wants
+current coverage extends `TABLE` from OSV's `MAL-` advisories or a
+continuously-updated GHSA query, or wires in an opt-in network lookup the way
+`pip_audit_engine.py` already models for ordinary advisories. Like the other
+three supply-chain engines, it reaches no network on its own — sending a
+client's dependency list to a third party is a disclosure decision an
+operator makes, not one this platform makes quietly.
 
 `docs/roadmap.md` carries the reasoning for each.
 

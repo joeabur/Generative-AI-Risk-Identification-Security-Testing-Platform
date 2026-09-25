@@ -1430,10 +1430,11 @@ stored channel row and asserts the token appears in none of them.
 
 ### Slices 3 and 4: supply-chain scanning (done)
 
-`docs/supply-chain.md` is the reference. Four engines, registered in
+`docs/supply-chain.md` is the reference. Five engines, registered in
 `app/core/appsec/registry.py`, all reporting the same `ScanResult` shape as every
-other engine: end-of-life runtimes, dependency licence risk, name confusion, and
-a container dependency scan.
+other engine: end-of-life runtimes, dependency licence risk, name confusion, a
+container dependency scan, and — added later, see below — known-malicious
+package identification.
 
 **The reason all four exist is that none of them has a CVE behind it**, which is
 why an advisory-only scanner reports an affected repository as clean. An
@@ -1497,8 +1498,9 @@ vulnerability. "Is this the package you meant" has no identifier at all.
   decision, the same shape as `pip-audit`'s opt-in.
 - **No image-layer scan.** Recorded as a gap in the findings themselves, not
   just here.
-- **No malware analysis.** The engine reports *where* install-time code runs; it
-  does not analyse what that code does, and does not claim to.
+- **No malware analysis in this engine.** It reports *where* install-time code
+  runs; it does not analyse what that code does, and does not claim to. A
+  separate engine now exists for the narrower, demonstrated case — see below.
 - **No reachability analysis** on container findings, same as the existing SCA
   engine.
 - **No licence policy configuration.** There is no way to declare "AGPL is
@@ -1513,6 +1515,52 @@ vulnerability. "Is this the package you meant" has no identifier at all.
   exercised only against the "tool absent" path there. The test asserts the
   honest-gap behaviour when Trivy is missing and the real parse when it is
   present, so the coverage is visible either way.
+
+### Requested after Phase 15/17: malware scanning of dependencies (done)
+
+`docs/security-review.md` carried "malware scanning of dependencies absent"
+as an open gap. `appsec.supplychain.malware` closes it at a stated scope: a
+new module, `app/core/appsec/supplychain/malware.py`, vendors 50 real GHSA
+"type: malware" advisories (25 PyPI, 25 npm), each pulled live from
+`github.com/advisories?query=type:malware` rather than invented, and dated
+`AS_OF = 2026-09-25`. The engine (`malware_engine.py`) matches declared
+dependency names against that table, normalized the same way
+`typosquat.py` normalizes one, and reports a match at CRITICAL/HIGH — the one
+supply-chain engine allowed to say "malware" outright, because a hit here is
+a name match against a report GHSA already confirmed, not a resemblance
+`typosquat_engine.py` is deliberately careful never to call malicious.
+
+**Why vendored rather than queried**, same reasoning as `pip_audit_engine.py`'s
+opt-in advisory lookup and `eol.py`'s local table: sending a client's
+dependency list to a third party at scan time is a disclosure decision an
+operator makes, not one a scanner makes quietly. The static
+no-network-per-supply-chain-engine test now covers this engine too.
+
+**The coverage-honesty pattern, made explicit rather than implied:** every run
+with at least one declared dependency emits a single aggregate
+`AEGIS-SUPPLY-041` finding stating how many dependencies were checked against
+how many table entries and as of what date — one note rather than one per
+dependency, because the vendored sample here is minuscule next to a real
+dependency list and a per-item repeat would say nothing the aggregate does
+not. A dependency absent from the table is **not assessed**, never reported
+as clean; `lookup()`'s own docstring says so, and a test pins that a `None`
+result is not treated as a verdict.
+
+**Deferrals, stated rather than hidden:**
+
+- **Not a live feed.** 50 entries is a demonstration of the mechanism, not
+  current coverage. Extending `TABLE` from OSV's `MAL-` advisories, a
+  continuously-updated GHSA query, or an opt-in network lookup are the paths
+  named in the module docstring for whoever wants that.
+- **Name match only, no version awareness.** Matching entries are almost all
+  purpose-built decoy packages with no legitimate release, so there is no
+  "version 2.1 is fine, 2.2 is compromised" case to preserve here the way a
+  hijacked legitimate package would need — unlike the EOL table, which does
+  carry versions.
+- **CHANGELOG's "no malicious-payload scanning of dependencies" limitation
+  bullet is now false** and belongs removed from `docs/limitations.md` and the
+  next changelog entry — left alone in the 0.1.0 entry itself, since that tag
+  point predates this engine.
 
 ### Slice 5: pull-request integration (done)
 

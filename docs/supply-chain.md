@@ -1,18 +1,22 @@
 # Supply-chain scanning
 
-Aegis ships four engines that answer questions an advisory database cannot.
-That framing is the point of this document: each of these exists precisely
-because there is **no CVE** behind the risk, which is why an advisory-only
-scanner reports the affected repository as clean.
+Aegis ships five engines that answer questions an advisory database cannot.
+That framing is the point of this document: each of the first four exists
+precisely because there is **no CVE** behind the risk, which is why an
+advisory-only scanner reports the affected repository as clean. The fifth,
+malware identification, is different: there *is* an advisory behind it, just
+not the kind `pip-audit` or an SCA feed already carries.
 
 | Engine | Rule IDs | Question |
 |---|---|---|
 | End-of-life runtime | `AEGIS-SUPPLY-010/011/019` | Is this runtime still getting security patches? |
 | Dependency licence risk | `AEGIS-SUPPLY-020…023` | What obligations do these dependencies carry? |
 | Name confusion | `AEGIS-SUPPLY-030/031/032` | Is this package the one you meant? |
+| Known-malicious package | `AEGIS-SUPPLY-040/041` | Does a declared dependency match a published malware advisory? |
 | Container dependency scan | `AEGIS-CONTAINER-001/009` | What vulnerable packages ship in the image? |
 
-None of the first three reach the network. The fourth runs Trivy offline.
+None of the first four reach the network. The container engine runs Trivy
+offline.
 
 ## End-of-life runtimes
 
@@ -105,6 +109,38 @@ The popular-name list is short and hand-maintained. A long generated list would
 produce many low-value near-matches, and the whole value of this check is its
 precision.
 
+## Known-malicious packages
+
+This is the one supply-chain engine allowed to say **"malware"** outright. The
+name-confusion engine above is careful never to, because a name-similarity
+score is a signal, not evidence. This engine is the opposite case: every entry
+in its table is a real, published GitHub Security Advisory of type "malware" —
+a specific package name a registry or GHSA has already confirmed carries
+malicious code. A match here is a demonstrated hit against a curated report,
+not a resemblance.
+
+The table (`app/core/appsec/supplychain/malware.py`) is **vendored with a
+snapshot date**, for the same reason the EOL table is and `pip-audit`'s
+advisory lookup is opt-in — sending a client's dependency list to a third
+party at scan time is a disclosure decision an operator makes, not one a
+scanner makes quietly. 50 entries (25 PyPI, 25 npm), each pulled live from
+GitHub's own Advisory Database (`github.com/advisories?query=type:malware`)
+rather than invented, dated `AS_OF = 2026-09-25`.
+
+* A match is reported at **CRITICAL/HIGH** (`AEGIS-SUPPLY-040`) — this is not
+  a resemblance to weigh, it is the exact name a real advisory already
+  confirmed.
+* Every run with a declared dependency emits one aggregate coverage finding
+  (`AEGIS-SUPPLY-041`) stating how many dependencies were checked against how
+  many table entries, as of what date. A dependency **absent from the table is
+  not assessed, never clean** — the table is a few dozen entries against a
+  real feed's tens of thousands, so absence overwhelmingly means "not in this
+  small sample," not "checked and safe."
+* Matching is by **name only**, normalized the same way the name-confusion
+  engine normalizes one. Almost every entry is a purpose-built decoy package
+  with no legitimate release, so there is no version to weigh the way a
+  hijacked legitimate package would need.
+
 ## Container scanning
 
 **Filesystem mode, not `docker pull`.** Pulling the base image a Dockerfile
@@ -132,9 +168,14 @@ Recorded rather than half-built:
   brand-new maintainer" signal. Both need an authorized outbound path and an
   operator's disclosure decision.
 * **No image-layer scan**, per above.
-* **No malware analysis.** The engine reports *where* install-time code runs; it
-  does not analyse what that code does. Claiming otherwise would be the
-  fake-functionality this project refuses.
+* **No malware *behaviour* analysis.** The name-confusion engine reports
+  *where* install-time code runs; it does not analyse what that code does.
+  Claiming otherwise would be the fake-functionality this project refuses. The
+  malware engine above is narrower still: it matches a name against a curated
+  report, and does not run or analyse anything either.
+* **The malware table is not a live feed.** 50 entries demonstrate the
+  mechanism; they are not current coverage. See "Known-malicious packages"
+  above.
 * **No reachability analysis.** A vulnerable package being present does not
   establish that the affected code path is used — every finding says so.
 * **A floating base image tag is not reported.** `FROM python:latest` and a

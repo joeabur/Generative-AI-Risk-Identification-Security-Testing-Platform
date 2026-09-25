@@ -14,6 +14,7 @@ from app.core.appsec.secrets.engine import SecretScanEngine
 from app.core.appsec.secrets.gitleaks_engine import GitleaksEngine
 from app.core.appsec.supplychain.eol_engine import EndOfLifeRuntimeEngine
 from app.core.appsec.supplychain.license_engine import LicenseRiskEngine
+from app.core.appsec.supplychain.malware_engine import MaliciousPackageEngine
 from app.core.appsec.supplychain.typosquat_engine import NameConfusionEngine
 
 
@@ -28,13 +29,15 @@ def appsec_engines(*, allow_advisory_lookup: bool = False) -> list[AppSecEngine]
         # is still in the history, and one that was ever pushed is compromised.
         GitleaksEngine(),
         CheckovEngine(),
-        # Supply-chain analysis. None of these reach the network, and all three
+        # Supply-chain analysis. None of these reach the network, and all four
         # answer questions an advisory database cannot: an end-of-life runtime
-        # has no CVE, a licence obligation is not a vulnerability, and "is this
-        # the package you meant" has no advisory behind it at all.
+        # has no CVE, a licence obligation is not a vulnerability, "is this the
+        # package you meant" has no advisory behind it at all, and a vendored
+        # malware match is checked against a snapshot rather than a live feed.
         EndOfLifeRuntimeEngine(),
         LicenseRiskEngine(),
         NameConfusionEngine(),
+        MaliciousPackageEngine(),
         # Filesystem mode, not `docker pull`: see the module docstring for why
         # pulling a base image is not something this engine does on its own.
         ContainerScanEngine(),

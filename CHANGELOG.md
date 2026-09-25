@@ -59,7 +59,9 @@ reports.
 - **AppSec**: Semgrep and Bandit (SAST), pip-audit (SCA), two secrets engines
   (working tree and git history), Checkov (IaC).
 - **Supply chain**: end-of-life runtimes, dependency licence obligations,
-  name-confusion and install-hook signals, and container package scanning.
+  name-confusion and install-hook signals, known-malicious package
+  identification against a vendored GHSA snapshot, and container package
+  scanning.
 
 ### Findings, evidence and reports
 
@@ -131,9 +133,9 @@ Stated rather than discovered later; the full list is in `docs/limitations.md`.
   permissions and redaction are what protect a bundle.
 - Rate limiting covers login and registration only — no general throttling
   on the rest of the platform's own API.
-- No malicious-payload scanning of dependencies; container/licence/EOL/
-  name-confusion analysis exist, nothing checks a package for a malicious
-  payload.
+- Malicious-package matching is against a small, vendored snapshot of
+  published GHSA malware advisories (50 entries), not a live feed — absence
+  from that table means "not in this sample", never "confirmed clean".
 - No signature verification for plugins, and no container image signing —
   images are scanned, none is published or signed.
 - No admin visibility into another user's sessions; `GET /auth/sessions` and

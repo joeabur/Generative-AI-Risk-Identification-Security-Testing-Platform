@@ -138,6 +138,73 @@ def cmd_target_show(args: argparse.Namespace, profile: Profile) -> ExitCode:
     return ExitCode.PASS
 
 
+# --- repositories -----------------------------------------------------------
+# The fast path onto the code-scanning engines: a URL, a branch, and an
+# affirmation of the right to have it scanned — no YAML, no separate
+# Rules-of-Engagement/Authorization commands. See
+# app/core/repositories/service.py for what this composes underneath.
+
+
+def cmd_repo_add(args: argparse.Namespace, profile: Profile) -> ExitCode:
+    if not args.authorized:
+        raise CliError(
+            "--authorized is required: pass it to affirm you have the right to have "
+            "this repository scanned",
+            ExitCode.CONFIG_ERROR,
+        )
+    org = _org(args, profile)
+    body = {
+        "name": args.name,
+        "url": args.url,
+        "branch": args.branch,
+        "authorized": args.authorized,
+    }
+    if args.environment:
+        body["environment"] = args.environment
+    if args.language:
+        body["languages"] = args.language
+    if args.allowed_path:
+        body["allowed_paths"] = args.allowed_path
+    if args.excluded_path:
+        body["excluded_paths"] = args.excluded_path
+    if args.max_repo_size_mb:
+        body["max_repo_size_mb"] = args.max_repo_size_mb
+    _emit(_client(profile).request("POST", f"/organizations/{org}/repositories", json_body=body))
+    return ExitCode.PASS
+
+
+def cmd_repo_list(args: argparse.Namespace, profile: Profile) -> ExitCode:
+    _emit(_client(profile).request("GET", f"/organizations/{_org(args, profile)}/repositories"))
+    return ExitCode.PASS
+
+
+def cmd_repo_show(args: argparse.Namespace, profile: Profile) -> ExitCode:
+    org = _org(args, profile)
+    _emit(_client(profile).request("GET", f"/organizations/{org}/repositories/{args.repository}"))
+    return ExitCode.PASS
+
+
+def cmd_repo_scan(args: argparse.Namespace, profile: Profile) -> ExitCode:
+    org = _org(args, profile)
+    _emit(
+        _client(profile).request(
+            "POST",
+            f"/organizations/{org}/repositories/{args.repository}/scan",
+            json_body={"safe_mode": not args.unsafe},
+        )
+    )
+    return ExitCode.PASS
+
+
+def cmd_repo_remove(args: argparse.Namespace, profile: Profile) -> ExitCode:
+    org = _org(args, profile)
+    _client(profile).request(
+        "DELETE", f"/organizations/{org}/repositories/{args.repository}", expect_json=False
+    )
+    print(f"removed {args.repository}")
+    return ExitCode.PASS
+
+
 def cmd_target_add(args: argparse.Namespace, profile: Profile) -> ExitCode:
     _emit(
         _client(profile).request(
@@ -619,6 +686,46 @@ def _parser() -> argparse.ArgumentParser:
     runtime_protection.add_argument("--target", required=True)
     runtime_protection.add_argument("--file", required=True, help="YAML runtime-protection record")
     runtime_protection.set_defaults(handler=cmd_target_runtime_protection)
+
+    repo = subparsers.add_parser(
+        "repo", help="connect a repository for code scanning (SAST/SCA/secrets/IaC)"
+    ).add_subparsers(dest="action")
+    repo_add = repo.add_parser("add", help="connect a repository")
+    repo_add.add_argument("--name", required=True)
+    repo_add.add_argument(
+        "--url", required=True, help="repository URL, e.g. https://host/org/repo.git"
+    )
+    repo_add.add_argument("--branch")
+    repo_add.add_argument(
+        "--authorized",
+        action="store_true",
+        help="affirm you have the right to have this repository scanned (required)",
+    )
+    repo_add.add_argument(
+        "--environment", choices=["staging", "test", "dev", "production"], default=None
+    )
+    repo_add.add_argument("--language", action="append", help="repeatable")
+    repo_add.add_argument(
+        "--allowed-path", action="append", help="glob, repeatable; defaults to everything"
+    )
+    repo_add.add_argument("--excluded-path", action="append", help="glob, repeatable")
+    repo_add.add_argument("--max-repo-size-mb", type=int)
+    repo_add.set_defaults(handler=cmd_repo_add)
+    repo.add_parser("list").set_defaults(handler=cmd_repo_list)
+    repo_show = repo.add_parser("show")
+    repo_show.add_argument("repository")
+    repo_show.set_defaults(handler=cmd_repo_show)
+    repo_scan = repo.add_parser("scan")
+    repo_scan.add_argument("repository")
+    repo_scan.add_argument(
+        "--unsafe",
+        action="store_true",
+        help="disable safe mode; the API decides what that permits, not the CLI",
+    )
+    repo_scan.set_defaults(handler=cmd_repo_scan)
+    repo_remove = repo.add_parser("remove")
+    repo_remove.add_argument("repository")
+    repo_remove.set_defaults(handler=cmd_repo_remove)
 
     auth = subparsers.add_parser("auth", help="authorization grants").add_subparsers(dest="action")
     grant = auth.add_parser("grant")

@@ -313,6 +313,81 @@ def test_target_runtime_protection_puts_the_yaml_body(
     assert route.calls.last.request.method == "PUT"
 
 
+# --- repositories -----------------------------------------------------------
+#
+# The fast path onto code scanning: `repo add` posts flags as JSON, not a
+# YAML file like `target add` — matching the API's own design decision to
+# skip the Rules-of-Engagement/Authorization workflow for a repository.
+
+
+@respx.mock
+def test_repo_add_posts_the_url_and_authorized_flag(profile: Profile) -> None:
+    route = respx.post(f"{BASE_URL}/organizations/{ORG}/repositories").mock(
+        return_value=httpx.Response(
+            201, json={"id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "name": "Example"}
+        )
+    )
+
+    code = cli.main(
+        [
+            "repo",
+            "add",
+            "--name",
+            "Example",
+            "--url",
+            "https://example.test/org/repo.git",
+            "--branch",
+            "main",
+            "--authorized",
+        ]
+    )
+
+    assert code == 0
+    assert json.loads(route.calls.last.request.content) == {
+        "name": "Example",
+        "url": "https://example.test/org/repo.git",
+        "branch": "main",
+        "authorized": True,
+    }
+
+
+def test_repo_add_without_authorized_refuses_before_any_request(profile: Profile) -> None:
+    """Client-side, before the request is even built: the same requirement
+    the API enforces server-side, checked here so a scripted call fails
+    fast with a clear message rather than a generic 422."""
+    code = cli.main(
+        ["repo", "add", "--name", "Example", "--url", "https://example.test/org/repo.git"]
+    )
+
+    assert code == int(ExitCode.CONFIG_ERROR)
+
+
+@respx.mock
+def test_repo_scan_posts_safe_mode_from_the_unsafe_flag(profile: Profile) -> None:
+    repo = "44444444-4444-4444-4444-444444444444"
+    route = respx.post(f"{BASE_URL}/organizations/{ORG}/repositories/{repo}/scan").mock(
+        return_value=httpx.Response(200, json={"run_id": RUN, "status": "queued"})
+    )
+
+    code = cli.main(["repo", "scan", repo, "--unsafe"])
+
+    assert code == 0
+    assert json.loads(route.calls.last.request.content) == {"safe_mode": False}
+
+
+@respx.mock
+def test_repo_remove_deletes(profile: Profile) -> None:
+    repo = "44444444-4444-4444-4444-444444444444"
+    route = respx.delete(f"{BASE_URL}/organizations/{ORG}/repositories/{repo}").mock(
+        return_value=httpx.Response(204)
+    )
+
+    code = cli.main(["repo", "remove", repo])
+
+    assert code == 0
+    assert route.calls.last.request.method == "DELETE"
+
+
 # --- scope explain --------------------------------------------------------
 
 

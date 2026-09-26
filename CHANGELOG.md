@@ -27,8 +27,22 @@ All notable changes to this project are recorded here. The format follows
 - Responsive layout pass on the Jinja2 dashboard: header, cards, and tables
   now reflow at phone width; the Next.js frontend's existing Tailwind
   breakpoints were left as-is and its top nav made wrap-safe.
+- `aegis-ai repo add|list|show|scan|remove` and
+  `/organizations/{id}/repositories` — a lightweight path onto code scanning
+  (SAST/SCA/secrets/IaC) for a repository someone already has read access
+  to: a URL, a branch, and a self-affirmed consent, skipping the
+  Rules-of-Engagement/Authorization-grant workflow a live network target
+  needs. New `TargetKind.CODE_REPO` keeps it safe — no `DastCheck`, no AI
+  check, only the AppSec engines against a checkout. See
+  `docs/repositories.md`.
 
 ### Fixed
+
+- `target_kind_enum` was missing `WEB_APP` on any database built by running
+  the migrations in order — only `Base.metadata.create_all()` (used by the
+  test suite) ever produced it, so a `web_app` target could never actually
+  be created against a properly migrated deployment. Found while adding
+  `CODE_REPO` to the same enum; both are added by migration `c3f8a2e91b4d`.
 
 - `aegis-ai target roe|adapter|code|runtime-protection` — a full audit pass
   found `target add` and `auth grant` covered by the CLI but the four

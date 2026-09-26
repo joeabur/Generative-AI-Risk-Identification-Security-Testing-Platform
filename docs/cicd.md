@@ -151,6 +151,23 @@ session (`aegis-ai login`), same as `auth grant` above: each is a claim
 someone accountable is making about scope or protection, not a pipeline
 setting.
 
+## Scanning source code without the full target workflow
+
+If all a pipeline needs is SAST/SCA/secrets/IaC over a repository — no live
+target, no adapter, no operator-granted authorization — `aegis-ai repo` is
+the shorter path (`docs/repositories.md` has the full design):
+
+```bash
+aegis-ai repo add --name "$REPO_NAME" --url "$REPO_URL" --branch "$BRANCH" --authorized
+aegis-ai repo scan "$REPOSITORY_ID" --wait   # not yet supported; see below
+```
+
+`repo add`/`repo scan` need `security_engineer` — no admin step, because
+adding a repository is its own consent (`--authorized`) rather than a claim
+someone else has to sign off on. `repo scan` does not yet support `--wait`
+or `--dry-run` the way `scan` does for a full target; poll `aegis-ai runs
+show "$RUN_ID"` for now.
+
 ## Typical pipeline shapes
 
 **Gate an existing run** (the scan runs on a schedule; the pipeline only

@@ -1,7 +1,7 @@
 """target_kind_code_repo
 
-Revision ID: c3f8a2e91b4d
-Revises: b2e6f4a91c7d
+Revision ID: c3f8a2e91b4d  # pragma: allowlist secret
+Revises: b2e6f4a91c7d  # pragma: allowlist secret
 Create Date: 2026-09-26
 
 Adds `CODE_REPO` to `target_kind_enum` — the "add a repository" flow
@@ -37,8 +37,8 @@ enum-widening migration in this project already makes.
 
 from alembic import op
 
-revision = "c3f8a2e91b4d"
-down_revision = "b2e6f4a91c7d"
+revision = "c3f8a2e91b4d"  # pragma: allowlist secret
+down_revision = "b2e6f4a91c7d"  # pragma: allowlist secret
 branch_labels = None
 depends_on = None
 

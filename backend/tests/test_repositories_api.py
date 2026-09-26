@@ -135,7 +135,7 @@ async def test_adding_a_repository_requires_the_authorized_affirmation(
     [
         "git://example.test/repo.git",  # unauthenticated protocol
         "ext::sh -c 'rm -rf /'",  # arbitrary command execution
-        "https://user:pass@example.test/repo.git",  # inline credentials
+        "https://user:pass@example.test/repo.git",  # inline credentials  # pragma: allowlist secret
     ],
 )
 async def test_a_disallowed_repository_url_is_rejected(

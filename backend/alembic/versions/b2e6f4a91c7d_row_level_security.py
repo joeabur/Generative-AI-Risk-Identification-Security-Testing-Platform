@@ -1,7 +1,7 @@
 """row_level_security
 
-Revision ID: b2e6f4a91c7d
-Revises: a1c7e29f4d83
+Revision ID: b2e6f4a91c7d  # pragma: allowlist secret
+Revises: a1c7e29f4d83  # pragma: allowlist secret
 Create Date: 2026-09-25
 
 Postgres Row-Level Security as a second, independent tenant-isolation
@@ -38,8 +38,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision = "b2e6f4a91c7d"
-down_revision = "a1c7e29f4d83"
+revision = "b2e6f4a91c7d"  # pragma: allowlist secret
+down_revision = "a1c7e29f4d83"  # pragma: allowlist secret
 branch_labels = None
 depends_on = None
 
